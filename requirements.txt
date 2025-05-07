@@ -7,3 +7,4 @@ llama-index-core
 PyMuPDF
 python-docx
 openpyxl
+llama-index-embeddings-openai
