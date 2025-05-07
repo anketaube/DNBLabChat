@@ -5,6 +5,13 @@ from parsel import Selector
 import re
 from urllib.parse import urljoin
 
+# NEU: Für PDF/Word
+import fitz  # PyMuPDF
+from docx import Document
+
+# NEU: LlamaIndex
+from llama_index.core import Document as LlamaDocument, VectorStoreIndex
+
 # Basis-URL und Wunsch-URLs
 BASE_URL = "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab"
 START_URL = BASE_URL + "/dnblab_node.html"
@@ -13,14 +20,12 @@ EXTRA_URLS = [
     "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLabPraxis/dnblabPraxis_node.html",
     "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabSchnittstellen.html?nn=849628",
     "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabFreieDigitaleObjektsammlung.html?nn=849628"
-    # Weitere Wunsch-URLs einfach ergÃ¤nzen!
 ]
 
 st.sidebar.title("Konfiguration")
-data_source = st.sidebar.radio("Datenquelle wÃ¤hlen:", ["Excel-Datei", "DNBLab-Webseite"])
-
+data_source = st.sidebar.radio("Datenquelle wählen:", ["Excel-Datei", "DNBLab-Webseite", "PDF/Word-Dateien"])
 chatgpt_model = st.sidebar.selectbox(
-    "ChatGPT Modell wÃ¤hlen",
+    "ChatGPT Modell wählen",
     options=["gpt-3.5-turbo", "gpt-4-turbo"],
     index=1
 )
@@ -37,7 +42,6 @@ def crawl_dnblab():
     visited = set()
     to_visit = set([START_URL] + EXTRA_URLS)
     data = []
-
     while to_visit:
         url = to_visit.pop()
         if url in visited:
@@ -48,7 +52,6 @@ def crawl_dnblab():
             if resp.status_code != 200:
                 continue
             selector = Selector(resp.text)
-            # Hauptinhalt extrahieren
             content = ' '.join(selector.xpath(
                 '//main//text() | //div[@role="main"]//text() | //body//text() | //article//text() | //section//text() | //p//text() | //li//text()'
             ).getall())
@@ -70,7 +73,6 @@ def crawl_dnblab():
                     to_visit.add(full_url)
         except Exception as e:
             st.warning(f"Fehler beim Crawlen von {url}: {e}")
-
     if data:
         df = pd.DataFrame(data)
         df.columns = df.columns.str.strip().str.lower()
@@ -91,35 +93,30 @@ def load_excel(file):
         st.error(f"Fehler beim Laden der Excel-Datei: {e}")
         return None
 
-def full_text_search(df, query):
+def load_pdf(file):
     try:
-        mask = df['volltextindex'].str.lower().str.contains(query.lower())
-        return df[mask]
-    except Exception:
-        return pd.DataFrame()
-
-def ask_question(question, context, model):
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        prompt = f"""
-Du bist ein Datenexperte fÃ¼r die DNB-DatensÃ¤tze.
-Hier sind die Daten mit Quellenangaben:
-{context}
-
-Beantworte die folgende Frage basierend auf den Daten oben in ganzen SÃ¤tzen.
-Gib immer die Quelle der Information an (entweder Excel-Datei oder Web-URL).
-Frage: {question}
-"""
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
-        )
-        return response.choices[0].message.content
+        doc = fitz.open(stream=file.read(), filetype="pdf")
+        text = " ".join(page.get_text() for page in doc)
+        return pd.DataFrame({'volltextindex': [text], 'quelle': [file.name]})
     except Exception as e:
-        st.error(f"Fehler bei OpenAI API-Abfrage: {e}")
-        return "Fehler bei der Anfrage."
+        st.error(f"Fehler beim Laden der PDF-Datei: {e}")
+        return None
+
+def load_word(file):
+    try:
+        doc = Document(file)
+        text = " ".join(para.text for para in doc.paragraphs)
+        return pd.DataFrame({'volltextindex': [text], 'quelle': [file.name]})
+    except Exception as e:
+        st.error(f"Fehler beim Laden der Word-Datei: {e}")
+        return None
+
+def df_to_documents(df):
+    # Wandelt DataFrame in LlamaIndex-Dokumente mit Metadaten um
+    return [
+        LlamaDocument(text=row["volltextindex"], metadata={"quelle": row["quelle"]})
+        for _, row in df.iterrows()
+    ]
 
 st.title("DNBLab-Chatbot")
 
@@ -134,34 +131,58 @@ elif data_source == "DNBLab-Webseite":
     st.sidebar.info("Es wird die DNBLab-Webseite inkl. aller Unterseiten indexiert. Das kann einige Sekunden dauern.")
     with st.spinner("DNBLab-Webseite wird indexiert..."):
         df = crawl_dnblab()
+elif data_source == "PDF/Word-Dateien":
+    uploaded_files = st.sidebar.file_uploader("PDF/Word-Dateien hochladen", type=["pdf", "docx"], accept_multiple_files=True)
+    dfs = []
+    if uploaded_files:
+        with st.spinner("Dateien werden geladen..."):
+            for file in uploaded_files:
+                if file.name.endswith(".pdf"):
+                    tdf = load_pdf(file)
+                elif file.name.endswith(".docx"):
+                    tdf = load_word(file)
+                else:
+                    tdf = None
+                if tdf is not None:
+                    dfs.append(tdf)
+            if dfs:
+                df = pd.concat(dfs, ignore_index=True)
 
 if df is None or df.empty:
-    st.info("Bitte laden Sie eine Excel-Datei hoch oder wÃ¤hlen Sie die DNBLab-Webseite aus der Sidebar.")
+    st.info("Bitte laden Sie eine Datei hoch oder wählen Sie die DNBLab-Webseite aus der Sidebar.")
+    st.stop()
+
+st.write(f"Geladene Datensätze: {len(df)}")
+st.markdown("**Folgende Quellen wurden indexiert:**")
+for url in sorted(df['quelle'].unique()):
+    st.markdown(f"- {url}")
+
+# LlamaIndex: Index aufbauen
+with st.spinner("Index wird erstellt..."):
+    documents = df_to_documents(df)
+    index = VectorStoreIndex.from_documents(documents)
+    query_engine = index.as_query_engine(similarity_top_k=5)
+
+query = st.text_input("Suchbegriff oder Frage eingeben:")
+
+if query:
+    with st.spinner("Frage wird analysiert..."):
+        response = query_engine.query(query)
+        antwort_text = response.response
+        quellen = [n.metadata["quelle"] for n in response.source_nodes]
+
+    st.subheader("Antwort des Sprachmodells:")
+    st.write(antwort_text)
+    st.markdown("**Quellen:**")
+    for quelle in set(quellen):
+        st.markdown(f"- {quelle}")
+
+    # Optional: Treffer-DataFrame anzeigen
+    if len(quellen) > 0:
+        treffer = df[df['quelle'].isin(quellen)]
+        if not treffer.empty:
+            st.subheader("Relevante Treffer aus den Daten:")
+            st.dataframe(treffer)
 else:
-    st.write(f"Geladene DatensÃ¤tze: {len(df)}")
-    st.markdown("**Folgende Seiten wurden indexiert:**")
-    for url in sorted(df['quelle'].unique()):
-        st.markdown(f"- [{url}]({url})")
-    query = st.text_input("Suchbegriff oder Frage eingeben:")
-    if query:
-        question_words = ["wie", "was", "welche", "wann", "warum", "wo", "wieviel", "wieviele", "zÃ¤hl", "nenn", "gibt", "zeige"]
-        is_question = any(query.lower().startswith(word) for word in question_words)
-        if is_question:
-            context = df[['volltextindex', 'quelle']].to_string(index=False)
-            with st.spinner("Frage wird analysiert..."):
-                answer = ask_question(query, context, chatgpt_model)
-            st.subheader("Antwort des Sprachmodells:")
-            st.write(answer)
-        else:
-            results = full_text_search(df, query)
-            if not results.empty:
-                st.subheader("Suchergebnisse")
-                display_cols = ['quelle'] + [col for col in ['datensetname', 'datenformat', 'kategorie 1', 'kategorie 2'] if col in results.columns]
-                st.dataframe(results[display_cols] if display_cols else results)
-                context = results[['volltextindex', 'quelle']].to_string(index=False)
-                with st.spinner("Analysiere Treffer..."):
-                    answer = ask_question(query, context, chatgpt_model)
-                st.subheader("ErgÃ¤nzende Antwort des Sprachmodells:")
-                st.write(answer)
-            else:
-                st.warning("Keine Treffer gefunden.")
+    st.info("Bitte geben Sie einen Suchbegriff oder eine Frage ein.")
+
