@@ -5,6 +5,7 @@ from parsel import Selector
 import re
 from urllib.parse import urljoin
 
+# ------------------- Konfiguration -------------------
 BASE_URL = "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab"
 START_URL = BASE_URL + "/dnblab_node.html"
 EXTRA_URLS = [
@@ -28,6 +29,7 @@ if "OPENAI_API_KEY" not in st.secrets:
     st.stop()
 api_key = st.secrets["OPENAI_API_KEY"]
 
+# ------------------- Web-Crawler -------------------
 @st.cache_data(show_spinner=True)
 def crawl_dnblab():
     client = httpx.Client(timeout=10, follow_redirects=True)
@@ -69,6 +71,7 @@ def crawl_dnblab():
     else:
         return None
 
+# ------------------- Excel-Lader (robust) -------------------
 @st.cache_data
 def load_excel(file):
     try:
@@ -92,6 +95,7 @@ def load_excel(file):
         st.error(f"Fehler beim Laden der Excel-Datei: {e}")
         return None
 
+# ------------------- Kontext-Bau -------------------
 def build_context(df, frage, max_results=5):
     mask = (
         df['datensetname'].str.lower().str.contains(frage.lower())
@@ -106,6 +110,7 @@ def build_context(df, frage, max_results=5):
     )
     return context, relevant
 
+# ------------------- OpenAI-Fragefunktion -------------------
 def ask_question(question, context, model):
     try:
         from openai import OpenAI
@@ -132,9 +137,11 @@ Frage: {question}
         st.error(f"Fehler bei OpenAI API-Abfrage: {e}")
         return "Fehler bei der Anfrage."
 
+# ------------------- Chatverlauf initialisieren -------------------
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+# ------------------- Haupt-App -------------------
 st.title("DNBLab-Chatbot")
 
 df = None
@@ -160,14 +167,16 @@ for url in sorted(df['quelle'].unique()):
     else:
         st.markdown(f"- {url}")
 
+# ------------------- Chatverlauf anzeigen -------------------
 st.markdown("### Chatverlauf")
 for entry in st.session_state.chat_history:
     st.markdown(f"**Du:** {entry['frage']}")
     st.markdown(f"**Bot:** {entry['antwort']}")
 
-col1, col2 = st.columns([4,1])
+# ------------------- Fragesystem -------------------
+col1, col2 = st.columns([4, 1])
 with col1:
-    frage = st.text_input("Frage eingeben oder nachhaken:", key="frage_input", value="")
+    frage = st.text_input("Frage eingeben oder nachhaken:", key="frage_input")
 with col2:
     abschicken = st.button("Absenden")
 
@@ -176,9 +185,9 @@ if abschicken and frage.strip():
         context, relevante = build_context(df, frage)
         antwort = ask_question(frage, context, chatgpt_model)
     st.session_state.chat_history.append({"frage": frage, "antwort": antwort})
-    st.session_state.frage_input = ""  # Textfeld leeren
+    st.session_state.frage_input = ""  # Textfeld nach Absenden leeren
 
-# Optionale Trefferanzeige
+# ------------------- Optionale Trefferanzeige -------------------
 if st.session_state.chat_history:
     letzte_frage = st.session_state.chat_history[-1]["frage"]
     _, relevante = build_context(df, letzte_frage)
