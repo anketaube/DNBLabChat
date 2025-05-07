@@ -3,8 +3,10 @@ pandas
 httpx
 parsel
 openai
-llama-index-core
 PyMuPDF
 python-docx
 openpyxl
+llama-index-embeddings-openai
+llama-index-core
+llama-index-llms-openai
 llama-index-embeddings-openai
