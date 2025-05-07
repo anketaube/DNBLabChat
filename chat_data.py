@@ -5,12 +5,10 @@ from parsel import Selector
 import re
 from urllib.parse import urljoin
 
-# NEU: Für PDF/Word
-import fitz  # PyMuPDF
-from docx import Document
-
-# NEU: LlamaIndex
-from llama_index.core import Document as LlamaDocument, VectorStoreIndex
+# LlamaIndex-Importe
+from llama_index.core import Document as LlamaDocument, VectorStoreIndex, Settings
+from llama_index.llms.openai import OpenAI
+from llama_index.embeddings.openai import OpenAIEmbedding
 
 # Basis-URL und Wunsch-URLs
 BASE_URL = "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab"
@@ -20,10 +18,11 @@ EXTRA_URLS = [
     "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLabPraxis/dnblabPraxis_node.html",
     "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabSchnittstellen.html?nn=849628",
     "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabFreieDigitaleObjektsammlung.html?nn=849628"
+    # Weitere Wunsch-URLs einfach ergänzen!
 ]
 
 st.sidebar.title("Konfiguration")
-data_source = st.sidebar.radio("Datenquelle wählen:", ["Excel-Datei", "DNBLab-Webseite", "PDF/Word-Dateien"])
+data_source = st.sidebar.radio("Datenquelle wählen:", ["Excel-Datei", "DNBLab-Webseite"])
 chatgpt_model = st.sidebar.selectbox(
     "ChatGPT Modell wählen",
     options=["gpt-3.5-turbo", "gpt-4-turbo"],
@@ -52,6 +51,7 @@ def crawl_dnblab():
             if resp.status_code != 200:
                 continue
             selector = Selector(resp.text)
+            # Hauptinhalt extrahieren
             content = ' '.join(selector.xpath(
                 '//main//text() | //div[@role="main"]//text() | //body//text() | //article//text() | //section//text() | //p//text() | //li//text()'
             ).getall())
@@ -93,24 +93,6 @@ def load_excel(file):
         st.error(f"Fehler beim Laden der Excel-Datei: {e}")
         return None
 
-def load_pdf(file):
-    try:
-        doc = fitz.open(stream=file.read(), filetype="pdf")
-        text = " ".join(page.get_text() for page in doc)
-        return pd.DataFrame({'volltextindex': [text], 'quelle': [file.name]})
-    except Exception as e:
-        st.error(f"Fehler beim Laden der PDF-Datei: {e}")
-        return None
-
-def load_word(file):
-    try:
-        doc = Document(file)
-        text = " ".join(para.text for para in doc.paragraphs)
-        return pd.DataFrame({'volltextindex': [text], 'quelle': [file.name]})
-    except Exception as e:
-        st.error(f"Fehler beim Laden der Word-Datei: {e}")
-        return None
-
 def df_to_documents(df):
     # Wandelt DataFrame in LlamaIndex-Dokumente mit Metadaten um
     return [
@@ -131,31 +113,22 @@ elif data_source == "DNBLab-Webseite":
     st.sidebar.info("Es wird die DNBLab-Webseite inkl. aller Unterseiten indexiert. Das kann einige Sekunden dauern.")
     with st.spinner("DNBLab-Webseite wird indexiert..."):
         df = crawl_dnblab()
-elif data_source == "PDF/Word-Dateien":
-    uploaded_files = st.sidebar.file_uploader("PDF/Word-Dateien hochladen", type=["pdf", "docx"], accept_multiple_files=True)
-    dfs = []
-    if uploaded_files:
-        with st.spinner("Dateien werden geladen..."):
-            for file in uploaded_files:
-                if file.name.endswith(".pdf"):
-                    tdf = load_pdf(file)
-                elif file.name.endswith(".docx"):
-                    tdf = load_word(file)
-                else:
-                    tdf = None
-                if tdf is not None:
-                    dfs.append(tdf)
-            if dfs:
-                df = pd.concat(dfs, ignore_index=True)
 
 if df is None or df.empty:
-    st.info("Bitte laden Sie eine Datei hoch oder wählen Sie die DNBLab-Webseite aus der Sidebar.")
+    st.info("Bitte laden Sie eine Excel-Datei hoch oder wählen Sie die DNBLab-Webseite aus der Sidebar.")
     st.stop()
 
 st.write(f"Geladene Datensätze: {len(df)}")
 st.markdown("**Folgende Quellen wurden indexiert:**")
 for url in sorted(df['quelle'].unique()):
-    st.markdown(f"- {url}")
+    if url.startswith("http"):
+        st.markdown(f"- [{url}]({url})")
+    else:
+        st.markdown(f"- {url}")
+
+# LlamaIndex Settings setzen
+Settings.llm = OpenAI(model=chatgpt_model, api_key=api_key)
+Settings.embed_model = OpenAIEmbedding(api_key=api_key)
 
 # LlamaIndex: Index aufbauen
 with st.spinner("Index wird erstellt..."):
@@ -175,7 +148,10 @@ if query:
     st.write(antwort_text)
     st.markdown("**Quellen:**")
     for quelle in set(quellen):
-        st.markdown(f"- {quelle}")
+        if str(quelle).startswith("http"):
+            st.markdown(f"- [{quelle}]({quelle})")
+        else:
+            st.markdown(f"- {quelle}")
 
     # Optional: Treffer-DataFrame anzeigen
     if len(quellen) > 0:
