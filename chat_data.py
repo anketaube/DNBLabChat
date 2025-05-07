@@ -5,12 +5,7 @@ from parsel import Selector
 import re
 from urllib.parse import urljoin
 
-# LlamaIndex-Importe
-from llama_index.core import Document as LlamaDocument, VectorStoreIndex, Settings
-from llama_index.llms.openai import OpenAI
-from llama_index.embeddings.openai import OpenAIEmbedding
-
-# Basis-URL und Wunsch-URLs
+# ------------------- Konfiguration -------------------
 BASE_URL = "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab"
 START_URL = BASE_URL + "/dnblab_node.html"
 EXTRA_URLS = [
@@ -18,7 +13,6 @@ EXTRA_URLS = [
     "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLabPraxis/dnblabPraxis_node.html",
     "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabSchnittstellen.html?nn=849628",
     "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabFreieDigitaleObjektsammlung.html?nn=849628"
-    # Weitere Wunsch-URLs einfach ergänzen!
 ]
 
 st.sidebar.title("Konfiguration")
@@ -35,6 +29,7 @@ if "OPENAI_API_KEY" not in st.secrets:
     st.stop()
 api_key = st.secrets["OPENAI_API_KEY"]
 
+# ------------------- Web-Crawler -------------------
 @st.cache_data(show_spinner=True)
 def crawl_dnblab():
     client = httpx.Client(timeout=10, follow_redirects=True)
@@ -51,26 +46,24 @@ def crawl_dnblab():
             if resp.status_code != 200:
                 continue
             selector = Selector(resp.text)
-            # Hauptinhalt extrahieren
-            content = ' '.join(selector.xpath(
-                '//main//text() | //div[@role="main"]//text() | //body//text() | //article//text() | //section//text() | //p//text() | //li//text()'
-            ).getall())
-            content = re.sub(r'\s+', ' ', content).strip()
-            if content and len(content) > 50:
-                data.append({
-                    'datensetname': f"Web-Inhalt: {url}",
-                    'volltextindex': content,
-                    'quelle': url
-                })
-            # Interne Links sammeln
-            for link in selector.xpath('//a/@href').getall():
-                full_url = urljoin(url, link).split('#')[0]
-                if (
-                    full_url.startswith(BASE_URL)
-                    and full_url not in visited
-                    and full_url not in to_visit
-                ):
-                    to_visit.add(full_url)
+            # Extrahiere strukturierte Datensätze: Überschrift + Beschreibung
+            for section in selector.xpath('//h2 | //h3'):
+                title = section.xpath('text()').get()
+                if title:
+                    title = title.strip()
+                else:
+                    continue
+                # Beschreibung: nächster Absatz oder Liste
+                description = ""
+                next_el = section.xpath('following-sibling::*[1]')
+                if next_el and next_el.get():
+                    description = " ".join(next_el.xpath('.//text()').getall()).strip()
+                if title and len(title) > 3 and description and len(description) > 10:
+                    data.append({
+                        'datensetname': title,
+                        'beschreibung': description,
+                        'quelle': url
+                    })
         except Exception as e:
             st.warning(f"Fehler beim Crawlen von {url}: {e}")
     if data:
@@ -80,30 +73,77 @@ def crawl_dnblab():
     else:
         return None
 
+# ------------------- Excel-Lader -------------------
 @st.cache_data
 def load_excel(file):
     try:
-        xls = pd.ExcelFile(file)
-        df = pd.read_excel(xls, sheet_name=xls.sheet_names[0], header=0, na_filter=False)
-        df['volltextindex'] = df.apply(lambda row: ' | '.join(str(cell) for cell in row if pd.notnull(cell)), axis=1)
-        df['quelle'] = "Excel-Datei"
+        df = pd.read_excel(file, header=0, na_filter=False)
+        # Versuche, Spalten zu erkennen
+        cols = [c.lower() for c in df.columns]
+        if "datensetname" not in cols:
+            df["datensetname"] = df.iloc[:, 0]
+        if "beschreibung" not in cols:
+            df["beschreibung"] = df.iloc[:, 1] if df.shape[1] > 1 else ""
+        df["quelle"] = "Excel-Datei"
+        df = df[["datensetname", "beschreibung", "quelle"]]
         df.columns = df.columns.str.strip().str.lower()
         return df
     except Exception as e:
         st.error(f"Fehler beim Laden der Excel-Datei: {e}")
         return None
 
-def df_to_documents(df):
-    # Wandelt DataFrame in LlamaIndex-Dokumente mit Metadaten um
-    return [
-        LlamaDocument(text=row["volltextindex"], metadata={"quelle": row["quelle"]})
-        for _, row in df.iterrows()
-    ]
+# ------------------- Kontext-Bau -------------------
+def build_context(df, frage):
+    # Suche relevante Datensätze nach Fragebegriffen
+    mask = (
+        df['datensetname'].str.lower().str.contains(frage.lower())
+        | df['beschreibung'].str.lower().str.contains(frage.lower())
+    )
+    relevant = df[mask]
+    if relevant.empty:
+        # Wenn nichts gefunden, nimm alles
+        relevant = df
+    # Kontexttext bauen
+    context = "\n".join(
+        f"Datenset: {row['datensetname']}\nBeschreibung: {row['beschreibung']}\nQuelle: {row['quelle']}\n"
+        for _, row in relevant.iterrows()
+    )
+    return context, relevant
 
+# ------------------- OpenAI-Fragefunktion -------------------
+def ask_question(question, context, model):
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        prompt = f"""
+Du bist ein Datenexperte für die DNB-Datensätze.
+
+Hier sind relevante Datensets mit Namen, Beschreibung und Quelle:
+
+{context}
+
+Beantworte die folgende Frage basierend auf den Daten oben in ganzen Sätzen.
+Nenne immer den Namen des Datensets und gib die Quelle an.
+Frage: {question}
+"""
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.error(f"Fehler bei OpenAI API-Abfrage: {e}")
+        return "Fehler bei der Anfrage."
+
+# ------------------- Chatverlauf initialisieren -------------------
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# ------------------- Haupt-App -------------------
 st.title("DNBLab-Chatbot")
 
 df = None
-
 if data_source == "Excel-Datei":
     uploaded_file = st.sidebar.file_uploader("Excel-Datei hochladen", type=["xlsx"])
     if uploaded_file:
@@ -126,39 +166,27 @@ for url in sorted(df['quelle'].unique()):
     else:
         st.markdown(f"- {url}")
 
-# LlamaIndex Settings setzen
-Settings.llm = OpenAI(model=chatgpt_model, api_key=api_key)
-Settings.embed_model = OpenAIEmbedding(api_key=api_key)
+# ------------------- Chatverlauf anzeigen -------------------
+st.markdown("### Chatverlauf")
+for entry in st.session_state.chat_history:
+    st.markdown(f"**Du:** {entry['frage']}")
+    st.markdown(f"**Bot:** {entry['antwort']}")
 
-# LlamaIndex: Index aufbauen
-with st.spinner("Index wird erstellt..."):
-    documents = df_to_documents(df)
-    index = VectorStoreIndex.from_documents(documents)
-    query_engine = index.as_query_engine(similarity_top_k=5)
+# ------------------- Fragesystem -------------------
+frage = st.text_input("Frage eingeben oder nachhaken:")
 
-query = st.text_input("Suchbegriff oder Frage eingeben:")
+if frage:
+    with st.spinner("Antwort wird generiert..."):
+        context, relevante = build_context(df, frage)
+        antwort = ask_question(frage, context, chatgpt_model)
+    st.session_state.chat_history.append({"frage": frage, "antwort": antwort})
+    st.experimental_rerun()
 
-if query:
-    with st.spinner("Frage wird analysiert..."):
-        response = query_engine.query(query)
-        antwort_text = response.response
-        quellen = [n.metadata["quelle"] for n in response.source_nodes]
-
-    st.subheader("Antwort des Sprachmodells:")
-    st.write(antwort_text)
-    st.markdown("**Quellen:**")
-    for quelle in set(quellen):
-        if str(quelle).startswith("http"):
-            st.markdown(f"- [{quelle}]({quelle})")
-        else:
-            st.markdown(f"- {quelle}")
-
-    # Optional: Treffer-DataFrame anzeigen
-    if len(quellen) > 0:
-        treffer = df[df['quelle'].isin(quellen)]
-        if not treffer.empty:
-            st.subheader("Relevante Treffer aus den Daten:")
-            st.dataframe(treffer)
-else:
-    st.info("Bitte geben Sie einen Suchbegriff oder eine Frage ein.")
+# ------------------- Optionale Trefferanzeige -------------------
+if st.session_state.chat_history:
+    letzte_frage = st.session_state.chat_history[-1]["frage"]
+    _, relevante = build_context(df, letzte_frage)
+    if not relevante.empty:
+        st.markdown("**Relevante Datensätze:**")
+        st.dataframe(relevante)
 
