@@ -46,7 +46,7 @@ def crawl_dnblab():
             if resp.status_code != 200:
                 continue
             selector = Selector(resp.text)
-            # Extrahiere strukturierte Datensätze: Überschrift + Beschreibung
+            # Extrahiere Datenset-Namen (Überschrift) + Beschreibung
             for section in selector.xpath('//h2 | //h3'):
                 title = section.xpath('text()').get()
                 if title:
@@ -73,17 +73,24 @@ def crawl_dnblab():
     else:
         return None
 
-# ------------------- Excel-Lader -------------------
+# ------------------- Excel-Lader (robust) -------------------
 @st.cache_data
 def load_excel(file):
     try:
         df = pd.read_excel(file, header=0, na_filter=False)
-        # Versuche, Spalten zu erkennen
         cols = [c.lower() for c in df.columns]
-        if "datensetname" not in cols:
-            df["datensetname"] = df.iloc[:, 0]
-        if "beschreibung" not in cols:
-            df["beschreibung"] = df.iloc[:, 1] if df.shape[1] > 1 else ""
+        # Datensetname: erste Spalte oder passende Spalte
+        if "datensetname" in cols:
+            df["datensetname"] = df[[c for c in df.columns if c.lower() == "datensetname"][0]]
+        else:
+            df["datensetname"] = df.iloc[:, 0].astype(str)
+        # Beschreibung: zweite Spalte oder passende Spalte
+        if "beschreibung" in cols:
+            df["beschreibung"] = df[[c for c in df.columns if c.lower() == "beschreibung"][0]]
+        elif df.shape[1] > 1:
+            df["beschreibung"] = df.iloc[:, 1].astype(str)
+        else:
+            df["beschreibung"] = ""
         df["quelle"] = "Excel-Datei"
         df = df[["datensetname", "beschreibung", "quelle"]]
         df.columns = df.columns.str.strip().str.lower()
@@ -94,16 +101,13 @@ def load_excel(file):
 
 # ------------------- Kontext-Bau -------------------
 def build_context(df, frage):
-    # Suche relevante Datensätze nach Fragebegriffen
     mask = (
         df['datensetname'].str.lower().str.contains(frage.lower())
         | df['beschreibung'].str.lower().str.contains(frage.lower())
     )
     relevant = df[mask]
     if relevant.empty:
-        # Wenn nichts gefunden, nimm alles
         relevant = df
-    # Kontexttext bauen
     context = "\n".join(
         f"Datenset: {row['datensetname']}\nBeschreibung: {row['beschreibung']}\nQuelle: {row['quelle']}\n"
         for _, row in relevant.iterrows()
@@ -189,4 +193,3 @@ if st.session_state.chat_history:
     if not relevante.empty:
         st.markdown("**Relevante Datensätze:**")
         st.dataframe(relevante)
-
