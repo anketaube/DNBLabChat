@@ -184,7 +184,7 @@ if frage:
         context, relevante = build_context(df, frage)
         antwort = ask_question(frage, context, chatgpt_model)
     st.session_state.chat_history.append({"frage": frage, "antwort": antwort})
-    st.experimental_rerun()
+    st.rerun()
 
 # ------------------- Optionale Trefferanzeige -------------------
 if st.session_state.chat_history:
