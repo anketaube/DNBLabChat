@@ -6,3 +6,4 @@ openai
 llama-index-core
 PyMuPDF
 python-docx
+openpyxl
