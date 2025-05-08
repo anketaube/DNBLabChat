@@ -3,33 +3,30 @@ import requests
 import json
 import nest_asyncio
 import uuid
-from llama_index.readers.web import TrafilaturaWebReader
+import re
 from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.schema import TextNode
 
 nest_asyncio.apply()
 
-GITHUB_JSON_URL = "https://raw.githubusercontent.com/anketaube/DNBLabChat/main/dnblab_index.json"
-
 st.set_page_config(page_title="DNB Lab Chat", layout="wide")
 st.title("DNB Lab Chat")
 
-# --- Session-State-Initialisierung ---
-for key, default in [
-    ("index", None),
-    ("nodes", []),
-    ("index_source", "github"),
-    ("chat_history", []),
-]:
-    if key not in st.session_state:
-        st.session_state[key] = default
+GITHUB_JSON_URL = "https://raw.githubusercontent.com/anketaube/DNBLabChat/main/dnblab_index.json"
 
 def is_valid_id(id_value):
     return isinstance(id_value, str) and id_value.strip() != ""
 
+def extract_url_from_text(text):
+    # Suche nach einer URL im Text (z.B. nach "Kurz-URL:" oder direkt)
+    match = re.search(r'(https?://[^\s]+)', text)
+    if match:
+        return match.group(1)
+    return ""
+
 def load_nodes_from_json(data):
-    """Lade Nodes aus JSON-Liste, generiere ggf. neue UUIDs, filtere leere Texte."""
+    """Lade Nodes aus JSON-Liste, setze source aus Text falls leer, filtere leere Texte."""
     nodes = []
     for entry in data:
         text = entry.get("text", "")
@@ -39,8 +36,10 @@ def load_nodes_from_json(data):
             continue
         if not is_valid_id(id_val):
             id_val = str(uuid.uuid4())
-        if "source" not in metadata:
-            metadata["source"] = ""
+        # Quelle aus metadata übernehmen oder aus Text extrahieren
+        if not metadata.get("source"):
+            url = extract_url_from_text(text)
+            metadata["source"] = url if url else ""
         node = TextNode(
             text=text,
             metadata=metadata,
@@ -50,7 +49,6 @@ def load_nodes_from_json(data):
     return nodes
 
 def fetch_index_from_github():
-    """Lade Index als JSON von GitHub und baue einen Index mit allen Chunks."""
     r = requests.get(GITHUB_JSON_URL)
     if r.status_code == 200:
         data = r.json()
@@ -65,7 +63,7 @@ def fetch_index_from_github():
         return None, []
 
 def create_rich_nodes(urls):
-    """Erstelle Nodes aus neuen URLs, setze source richtig."""
+    from llama_index.readers.web import TrafilaturaWebReader
     documents = TrafilaturaWebReader().load_data(urls)
     parser = SimpleNodeParser()
     nodes = []
@@ -92,6 +90,16 @@ def index_to_rich_json(nodes):
                 "metadata": node.metadata,
             })
     return json.dumps(export, ensure_ascii=False, indent=2)
+
+# --- Session-State-Initialisierung ---
+for key, default in [
+    ("index", None),
+    ("nodes", []),
+    ("index_source", "github"),
+    ("chat_history", []),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 # --- Initiales Laden aus GitHub beim Start (nur, wenn noch kein Index geladen ist) ---
 if not st.session_state.nodes and st.session_state.index_source == "github":
@@ -142,53 +150,23 @@ st.header("Chat mit dem Index")
 st.write("Stelle Fragen zum geladenen Index. Quellen werden bei der Antwort angezeigt. Nachhaken ist möglich.")
 
 if st.session_state.index:
-    user_input = st.text_input("Frage an den Index stellen:")
-    if user_input:
-        response = st.session_state.index.as_query_engine(similarity_top_k=3).query(user_input)
-        antwort = response.response if hasattr(response, "response") else str(response)
-        unique_sources = set(
-            node.metadata.get('source', 'unbekannt')
-            for node in response.source_nodes
-            if node.metadata.get('source', '').strip()
-        )
-        st.session_state.chat_history.append({
-            "frage": user_input,
-            "antwort": antwort,
-            "quellen": list(unique_sources)
-        })
-        st.write("Antwort:")
-        st.write(antwort)
-        st.write("Quellen:")
-        if unique_sources:
-            for source in unique_sources:
-                st.write(f"- {source}")
-        else:
-            st.write("Keine Quelle im Chunk-Metadatum gefunden.")
-
-    # Chatverlauf anzeigen
-    st.subheader("Chatverlauf dieser Sitzung")
-    for i, entry in enumerate(st.session_state.chat_history):
-        st.markdown(f"**Frage {i+1}:** {entry['frage']}")
-        st.markdown(f"**Antwort:** {entry['antwort']}")
-        st.markdown("**Quellen:**")
-        for source in entry["quellen"]:
-            st.markdown(f"- {source}")
-
-    # Nachhak-Feld mit Bezug auf den Verlauf
-    st.subheader("Nachhaken zur letzten Antwort")
-    if st.session_state.chat_history:
-        followup = st.text_input("Nachhaken (bezieht sich auf die letzte Antwort):", key="followup")
-        if followup:
-            last_answer = st.session_state.chat_history[-1]["antwort"]
-            followup_prompt = f"Vorherige Antwort: {last_answer}\nNachhaken: {followup}"
-            response = st.session_state.index.as_query_engine(similarity_top_k=3).query(followup_prompt)
+    # Nur Eingabefeld, solange noch keine Antwort im Verlauf
+    if not st.session_state.chat_history:
+        user_input = st.text_input("Frage an den Index stellen:")
+        if user_input:
+            response = st.session_state.index.as_query_engine(similarity_top_k=3).query(user_input)
             antwort = response.response if hasattr(response, "response") else str(response)
             unique_sources = set(
                 node.metadata.get('source', 'unbekannt')
                 for node in response.source_nodes
                 if node.metadata.get('source', '').strip()
             )
-            st.write("Antwort auf Nachhaken:")
+            st.session_state.chat_history.append({
+                "frage": user_input,
+                "antwort": antwort,
+                "quellen": list(unique_sources)
+            })
+            st.write("Antwort:")
             st.write(antwort)
             st.write("Quellen:")
             if unique_sources:
@@ -196,11 +174,39 @@ if st.session_state.index:
                     st.write(f"- {source}")
             else:
                 st.write("Keine Quelle im Chunk-Metadatum gefunden.")
+    else:
+        # Nach erster Antwort: Chatverlauf und Nachhaken
+        user_input = st.text_input("Frage an den Index stellen oder Nachhaken:", key="maininput")
+        if user_input:
+            response = st.session_state.index.as_query_engine(similarity_top_k=3).query(user_input)
+            antwort = response.response if hasattr(response, "response") else str(response)
+            unique_sources = set(
+                node.metadata.get('source', 'unbekannt')
+                for node in response.source_nodes
+                if node.metadata.get('source', '').strip()
+            )
             st.session_state.chat_history.append({
-                "frage": followup_prompt,
+                "frage": user_input,
                 "antwort": antwort,
                 "quellen": list(unique_sources)
             })
+            st.write("Antwort:")
+            st.write(antwort)
+            st.write("Quellen:")
+            if unique_sources:
+                for source in unique_sources:
+                    st.write(f"- {source}")
+            else:
+                st.write("Keine Quelle im Chunk-Metadatum gefunden.")
+
+        # Chatverlauf anzeigen
+        st.subheader("Chatverlauf dieser Sitzung")
+        for i, entry in enumerate(st.session_state.chat_history):
+            st.markdown(f"**Frage {i+1}:** {entry['frage']}")
+            st.markdown(f"**Antwort:** {entry['antwort']}")
+            st.markdown("**Quellen:**")
+            for source in entry["quellen"]:
+                st.markdown(f"- {source}")
+
 else:
     st.info("Der Index wird beim Start automatisch aus GitHub geladen. Sobald er bereit ist, kannst du den Chat nutzen.")
-
