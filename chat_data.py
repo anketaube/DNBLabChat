@@ -34,7 +34,6 @@ def load_nodes_from_json(data):
             continue
         if not is_valid_id(id_val):
             id_val = str(uuid.uuid4())
-        # Quelle aus metadata übernehmen oder aus Text extrahieren
         if not metadata.get("source"):
             url = extract_url_from_text(text)
             metadata["source"] = url if url else ""
@@ -60,26 +59,6 @@ def fetch_index_from_github():
         st.error("Konnte Index nicht von GitHub laden.")
         return None, []
 
-def create_rich_nodes(urls):
-    from llama_index.readers.web import TrafilaturaWebReader
-    documents = TrafilaturaWebReader().load_data(urls)
-    parser = SimpleNodeParser()
-    nodes = []
-    for url, doc in zip(urls, documents):
-        doc.metadata["source"] = url
-        doc.metadata["title"] = doc.metadata.get("title", "")
-        for node in parser.get_nodes_from_documents([doc]):
-            node_id = node.node_id if is_valid_id(node.node_id) else str(uuid.uuid4())
-            if node.text and node.text.strip():
-                chunk_metadata = dict(node.metadata)
-                chunk_metadata["source"] = url
-                nodes.append(TextNode(
-                    text=node.text,
-                    metadata=chunk_metadata,
-                    id_=node_id
-                ))
-    return nodes
-
 def index_to_rich_json(nodes):
     export = []
     for node in nodes:
@@ -95,96 +74,31 @@ def index_to_rich_json(nodes):
 for key, default in [
     ("index", None),
     ("nodes", []),
-    ("index_source", "github"),
     ("chat_history", []),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
 
-# --- SIDEBAR: Index-Funktionen ---
-with st.sidebar:
-    st.header("Index-Funktionen")
-    st.write("1. **URLs indexieren und als neue JSON speichern**\n2. **URLs zum bestehenden Index hinzufügen**\n3. **Eigenen Index laden**\n4. **Kombinierten Index herunterladen**")
-    st.markdown("---")
-
-    # 1. Neue JSON nur aus URLs bauen
-    st.subheader("Nur neue URLs zu JSON (ohne Zusammenführen)")
-    urls_json_input = st.text_area("Neue URLs für eigenen Index (eine pro Zeile):", key="json_urls")
-    urls_json = [u.strip() for u in urls_json_input.split('\n') if u.strip()]
-    if urls_json and st.button("Neuen Index aus diesen URLs als JSON erstellen"):
-        with st.spinner("Erzeuge neuen Index..."):
-            nodes = create_rich_nodes(urls_json)
-            if nodes:
-                json_data = index_to_rich_json(nodes)
-                st.download_button(
-                    label="Nur neuen Index als JSON herunterladen",
-                    data=json_data,
-                    file_name="dnblab_index.json",  # Für GitHub-Ersatz!
-                    mime="application/json"
-                )
-            else:
-                st.warning("Keine gültigen Chunks aus den URLs extrahiert.")
-
-    st.markdown("---")
-
-    # 2. URLs zum bestehenden Index hinzufügen
-    st.subheader("Neue URLs zum bestehenden Index hinzufügen")
-    urls_input = st.text_area("Neue URLs (eine pro Zeile):", key="add_urls")
-    urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
-    if urls and st.button("Neue URLs indexieren und hinzufügen"):
-        with st.spinner("Neue URLs werden indexiert..."):
-            new_nodes = create_rich_nodes(urls)
-            existing_ids = set(n.node_id for n in st.session_state.nodes)
-            existing_texts = set(n.text for n in st.session_state.nodes)
-            combined_nodes = st.session_state.nodes.copy()
-            added = 0
-            for node in new_nodes:
-                if node.node_id not in existing_ids and node.text not in existing_texts:
-                    combined_nodes.append(node)
-                    added += 1
-            if added:
-                st.session_state.nodes = combined_nodes
-                st.session_state.index = VectorStoreIndex(combined_nodes)
-                st.success(f"{added} neue Chunks hinzugefügt! Gesamt: {len(combined_nodes)}.")
-            else:
-                st.info("Keine neuen Chunks hinzugefügt (möglicherweise waren sie schon im Index).")
-
-    st.markdown("---")
-
-    # 3. Eigenen Index laden (optional)
-    st.subheader("Eigenen Index laden (optional)")
-    uploaded_file = st.file_uploader("JSON-Datei auswählen", type=["json"])
-    if uploaded_file is not None:
-        data = json.load(uploaded_file)
-        nodes = load_nodes_from_json(data)
-        if nodes:
-            st.session_state.nodes = nodes
-            st.session_state.index = VectorStoreIndex(nodes)
-            st.session_state.index_source = "uploaded"
-            st.success(f"Index aus Datei geladen ({len(nodes)} Chunks).")
-        else:
-            st.error("Die Datei enthält keine gültigen Chunks.")
-
-    st.markdown("---")
-
-    # 4. Download-Button für den kombinierten Index
-    if st.session_state.nodes:
-        json_data = index_to_rich_json(st.session_state.nodes)
-        st.download_button(
-            label="Kombinierten Index als JSON herunterladen",
-            data=json_data,
-            file_name="dnblab_index.json",
-            mime="application/json"
-        )
-
-# --- Initiales Laden aus GitHub beim Start (nur, wenn noch kein Index geladen ist) ---
-if not st.session_state.nodes and st.session_state.index_source == "github":
+# --- Nur beim Start: Index aus GitHub laden ---
+if not st.session_state.nodes:
     with st.spinner("Lade Index aus GitHub..."):
         index, nodes = fetch_index_from_github()
         if index:
             st.session_state.index = index
             st.session_state.nodes = nodes
             st.success(f"Index aus GitHub geladen ({len(nodes)} Chunks).")
+
+# --- SIDEBAR: Download des aktuellen Index ---
+with st.sidebar:
+    st.header("Index herunterladen")
+    if st.session_state.nodes:
+        json_data = index_to_rich_json(st.session_state.nodes)
+        st.download_button(
+            label="Aktuellen Index als JSON herunterladen",
+            data=json_data,
+            file_name="dnblab_index.json",
+            mime="application/json"
+        )
 
 # --- HAUPTBEREICH: Chat ---
 st.header("Chat mit dem Index")
