@@ -10,3 +10,6 @@ llama-index-embeddings-openai
 llama-index-core
 llama-index-llms-openai
 llama-index-embeddings-openai
+llama-index
+llama-index-readers-web
+nest-asyncio
