@@ -12,7 +12,7 @@ def create_index(urls):
         doc.metadata = {"source": url}
     return VectorStoreIndex.from_documents(documents)
 
-st.title("DNB Lab Chat – Index Builder (mit Quellenangabe)")
+st.title("DNB Lab Chat – Index Builder (mit eindeutigen Quellenangaben)")
 
 urls_input = st.text_area("Gib die URLs ein (eine pro Zeile):")
 urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
@@ -33,5 +33,7 @@ if "index" in st.session_state:
         st.write("Antwort:")
         st.write(response.response if hasattr(response, "response") else str(response))
         st.write("Quellen:")
-        for node in response.source_nodes:
-            st.write(f"- {node.metadata.get('source', 'unbekannt')}")
+        # Einzigartige Quellen extrahieren und anzeigen
+        unique_sources = set(node.metadata.get('source', 'unbekannt') for node in response.source_nodes)
+        for source in unique_sources:
+            st.write(f"- {source}")
