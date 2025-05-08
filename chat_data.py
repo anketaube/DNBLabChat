@@ -12,7 +12,7 @@ nest_asyncio.apply()
 
 GITHUB_JSON_URL = "https://raw.githubusercontent.com/anketaube/DNBLabChat/main/dnblab_index.json"
 
-st.title("DNB Lab Chat – Kombinierter Index & Download")
+st.title("DNB Lab Chat – Automatischer GitHub-Index & Ergänzen neuer URLs")
 
 # --- Session-State-Initialisierung ---
 for key, default in [
@@ -28,7 +28,7 @@ def is_valid_id(id_value):
     return isinstance(id_value, str) and id_value.strip() != ""
 
 def load_nodes_from_json(data):
-    """Hilfsfunktion: Lade Nodes aus JSON-Liste, generiere ggf. neue UUIDs, filtere leere Texte."""
+    """Lade Nodes aus JSON-Liste, generiere ggf. neue UUIDs, filtere leere Texte."""
     nodes = []
     for entry in data:
         text = entry.get("text", "")
@@ -93,19 +93,7 @@ def index_to_rich_json(nodes):
             })
     return json.dumps(export, ensure_ascii=False, indent=2)
 
-# --- Upload bestehender Index (optional, z.B. aus Datei) ---
-st.subheader("Optional: Lade einen bestehenden Index als JSON hoch")
-uploaded_file = st.file_uploader("Index-JSON-Datei auswählen", type=["json"])
-if uploaded_file is not None:
-    data = json.load(uploaded_file)
-    nodes = load_nodes_from_json(data)
-    if nodes:
-        st.session_state.nodes = nodes
-        st.session_state.index = VectorStoreIndex(nodes)
-        st.session_state.index_source = "uploaded"
-        st.success(f"Index aus Datei geladen ({len(nodes)} Chunks).")
-
-# --- Initiales Laden aus GitHub (nur, wenn noch kein Index geladen ist) ---
+# --- Initiales Laden aus GitHub beim Start (nur, wenn noch kein Index geladen ist) ---
 if not st.session_state.nodes and st.session_state.index_source == "github":
     with st.spinner("Lade Index aus GitHub..."):
         index, nodes = fetch_index_from_github()
@@ -166,3 +154,47 @@ if st.session_state.index:
             "quellen": list(unique_sources)
         })
         st.write("Antwort:")
+        st.write(antwort)
+        st.write("Quellen:")
+        if unique_sources:
+            for source in unique_sources:
+                st.write(f"- {source}")
+        else:
+            st.write("Keine Quelle im Chunk-Metadatum gefunden.")
+
+    # Chatverlauf anzeigen
+    st.subheader("Chatverlauf dieser Sitzung")
+    for i, entry in enumerate(st.session_state.chat_history):
+        st.markdown(f"**Frage {i+1}:** {entry['frage']}")
+        st.markdown(f"**Antwort:** {entry['antwort']}")
+        st.markdown("**Quellen:**")
+        for source in entry["quellen"]:
+            st.markdown(f"- {source}")
+
+    # Nachhak-Feld mit Bezug auf den Verlauf
+    st.subheader("Nachhaken zur letzten Antwort")
+    if st.session_state.chat_history:
+        followup = st.text_input("Nachhaken (bezieht sich auf die letzte Antwort):", key="followup")
+        if followup:
+            last_answer = st.session_state.chat_history[-1]["antwort"]
+            followup_prompt = f"Vorherige Antwort: {last_answer}\nNachhaken: {followup}"
+            response = st.session_state.index.as_query_engine(similarity_top_k=3).query(followup_prompt)
+            antwort = response.response if hasattr(response, "response") else str(response)
+            unique_sources = set(
+                node.metadata.get('source', 'unbekannt')
+                for node in response.source_nodes
+                if node.metadata.get('source', '').strip()
+            )
+            st.write("Antwort auf Nachhaken:")
+            st.write(antwort)
+            st.write("Quellen:")
+            if unique_sources:
+                for source in unique_sources:
+                    st.write(f"- {source}")
+            else:
+                st.write("Keine Quelle im Chunk-Metadatum gefunden.")
+            st.session_state.chat_history.append({
+                "frage": followup_prompt,
+                "antwort": antwort,
+                "quellen": list(unique_sources)
+            })
