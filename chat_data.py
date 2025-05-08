@@ -1,10 +1,3 @@
-# requirements.txt sollte enthalten:
-# streamlit
-# llama-index
-# llama-index-readers-web
-# nest-asyncio
-# trafilatura
-
 import streamlit as st
 from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.core import VectorStoreIndex
@@ -14,13 +7,12 @@ nest_asyncio.apply()
 
 def create_index(urls):
     documents = TrafilaturaWebReader().load_data(urls)
-    for doc in documents:
-        # Sicheres Auslesen der URL
-        url = doc.metadata.get("url", None)
-        doc.metadata = {"source": url if url else "unbekannt"}
+    # Weise jeder Quelle explizit die URL als Metadatum zu
+    for url, doc in zip(urls, documents):
+        doc.metadata = {"source": url}
     return VectorStoreIndex.from_documents(documents)
 
-st.title("DNB Lab Chat – Index Builder")
+st.title("DNB Lab Chat – Index Builder (mit Quellenangabe)")
 
 urls_input = st.text_area("Gib die URLs ein (eine pro Zeile):")
 urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
@@ -39,7 +31,7 @@ if "index" in st.session_state:
     if query:
         response = st.session_state.index.as_query_engine(similarity_top_k=3).query(query)
         st.write("Antwort:")
-        st.write(response)
+        st.write(response.response if hasattr(response, "response") else str(response))
         st.write("Quellen:")
         for node in response.source_nodes:
             st.write(f"- {node.metadata.get('source', 'unbekannt')}")
