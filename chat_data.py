@@ -14,12 +14,6 @@ st.title("DNB Lab: JSON- und Vektorindex aus URLs erzeugen")
 def is_valid_id(id_value):
     return isinstance(id_value, str) and id_value.strip() != ""
 
-def extract_url_from_text(text):
-    match = re.search(r'(https?://[^\s]+)', text)
-    if match:
-        return match.group(1)
-    return ""
-
 def create_rich_nodes(urls):
     documents = TrafilaturaWebReader().load_data(urls)
     parser = SimpleNodeParser()
@@ -72,17 +66,17 @@ if urls and st.button("Index aus URLs erzeugen"):
                 mime="application/json"
             )
 
-            # Schritt 2: Vektorindex erzeugen und herunterladen
-            st.header("Schritt 2: Vektorindex erzeugen und herunterladen")
-            if st.button("Vektorindex aus erzeugtem JSON bauen"):
-                with st.spinner("Erzeuge Vektorindex... (kann einige Minuten dauern)"):
-                    index = VectorStoreIndex(nodes)
-                    index.save_to_disk("dnblab_index.llama")
-                with open("dnblab_index.llama", "rb") as f:
-                    st.download_button(
-                        label="Vektorindex herunterladen (dnblab_index.llama)",
-                        data=f,
-                        file_name="dnblab_index.llama",
-                        mime="application/octet-stream"
-                    )
-                st.success("Vektorindex wurde erzeugt und steht zum Download bereit!")
+if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
+    st.header("Schritt 2: Vektorindex erzeugen und herunterladen")
+    if st.button("Vektorindex aus erzeugtem JSON bauen"):
+        with st.spinner("Erzeuge Vektorindex... (kann einige Minuten dauern)"):
+            index = VectorStoreIndex(st.session_state.generated_nodes)
+            index.save_to_disk("dnblab_index.llama")
+        with open("dnblab_index.llama", "rb") as f:
+            st.download_button(
+                label="Vektorindex herunterladen (dnblab_index.llama)",
+                data=f,
+                file_name="dnblab_index.llama",
+                mime="application/octet-stream"
+            )
+        st.success("Vektorindex wurde erzeugt und steht zum Download bereit!")
