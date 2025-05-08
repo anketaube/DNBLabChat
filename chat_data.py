@@ -7,20 +7,20 @@ from llama_index.core import VectorStoreIndex
 
 nest_asyncio.apply()
 
-# GitHub-Rohlink zur JSON-Datei (hier anpassen, falls nötig)
+# GitHub-Rohlink zur JSON-Datei (hier ggf. anpassen)
 GITHUB_JSON_URL = "https://raw.githubusercontent.com/anketaube/DNBLabChat/main/dnblab_index.json"
 
-st.title("DNB Lab Chat – mit GitHub-Index und Chatverlauf")
+st.title("DNB Lab Chat – mit GitHub-Index, Download & Chatverlauf")
 
-# Chatverlauf initialisieren
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-# Index- und Dokument-Cache
-if "index" not in st.session_state:
-    st.session_state.index = None
-    st.session_state.documents = None
-    st.session_state.index_source = "github"
+# --- Session-State-Initialisierung ---
+for key, default in [
+    ("index", None),
+    ("documents", None),
+    ("index_source", "github"),
+    ("chat_history", []),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 def fetch_index_from_github():
     """Lade Index als JSON von GitHub und baue einen einfachen Index."""
