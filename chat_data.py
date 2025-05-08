@@ -19,14 +19,12 @@ def is_valid_id(id_value):
     return isinstance(id_value, str) and id_value.strip() != ""
 
 def extract_url_from_text(text):
-    # Suche nach einer URL im Text (z.B. nach "Kurz-URL:" oder direkt)
     match = re.search(r'(https?://[^\s]+)', text)
     if match:
         return match.group(1)
     return ""
 
 def load_nodes_from_json(data):
-    """Lade Nodes aus JSON-Liste, setze source aus Text falls leer, filtere leere Texte."""
     nodes = []
     for entry in data:
         text = entry.get("text", "")
@@ -36,7 +34,6 @@ def load_nodes_from_json(data):
             continue
         if not is_valid_id(id_val):
             id_val = str(uuid.uuid4())
-        # Quelle aus metadata übernehmen oder aus Text extrahieren
         if not metadata.get("source"):
             url = extract_url_from_text(text)
             metadata["source"] = url if url else ""
@@ -73,8 +70,8 @@ def create_rich_nodes(urls):
         for node in parser.get_nodes_from_documents([doc]):
             node_id = node.node_id if is_valid_id(node.node_id) else str(uuid.uuid4())
             if node.text and node.text.strip():
-                chunk_metadata = dict(node.metadata)  # Kopie!
-                chunk_metadata["source"] = url  # Explizit setzen!
+                chunk_metadata = dict(node.metadata)
+                chunk_metadata["source"] = url
                 nodes.append(TextNode(
                     text=node.text,
                     metadata=chunk_metadata,
@@ -112,13 +109,36 @@ if not st.session_state.nodes and st.session_state.index_source == "github":
             st.session_state.nodes = nodes
             st.success(f"Index aus GitHub geladen ({len(nodes)} Chunks).")
 
-# --- SIDEBAR: URL-Eingabe und Index-Erweiterung ---
+# --- SIDEBAR: Index-Funktionen ---
 with st.sidebar:
-    st.header("Index erweitern (optional)")
-    st.write("Füge neue URLs hinzu, die zum bestehenden Index ergänzt werden. Der Chat funktioniert immer mit dem aktuellen Index.")
-    urls_input = st.text_area("Neue URLs (eine pro Zeile):")
-    urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
+    st.header("Index-Funktionen")
+    st.write("1. **URLs indexieren und als neue JSON speichern**\n2. **URLs zum bestehenden Index hinzufügen**\n3. **Kombinierten Index herunterladen**")
+    st.markdown("---")
 
+    # 1. Neue JSON nur aus URLs bauen
+    st.subheader("Nur neue URLs zu JSON (ohne Zusammenführen)")
+    urls_json_input = st.text_area("Neue URLs für eigenen Index (eine pro Zeile):", key="json_urls")
+    urls_json = [u.strip() for u in urls_json_input.split('\n') if u.strip()]
+    if urls_json and st.button("Neuen Index aus diesen URLs als JSON erstellen"):
+        with st.spinner("Erzeuge neuen Index..."):
+            nodes = create_rich_nodes(urls_json)
+            if nodes:
+                json_data = index_to_rich_json(nodes)
+                st.download_button(
+                    label="Nur neuen Index als JSON herunterladen",
+                    data=json_data,
+                    file_name="dnblab_index_neu.json",
+                    mime="application/json"
+                )
+            else:
+                st.warning("Keine gültigen Chunks aus den URLs extrahiert.")
+
+    st.markdown("---")
+
+    # 2. URLs zum bestehenden Index hinzufügen
+    st.subheader("Neue URLs zum bestehenden Index hinzufügen")
+    urls_input = st.text_area("Neue URLs (eine pro Zeile):", key="add_urls")
+    urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
     if urls and st.button("Neue URLs indexieren und hinzufügen"):
         with st.spinner("Neue URLs werden indexiert..."):
             new_nodes = create_rich_nodes(urls)
@@ -137,7 +157,9 @@ with st.sidebar:
             else:
                 st.info("Keine neuen Chunks hinzugefügt (möglicherweise waren sie schon im Index).")
 
-    # Download-Button für den kombinierten Index
+    st.markdown("---")
+
+    # 3. Download-Button für den kombinierten Index
     if st.session_state.nodes:
         json_data = index_to_rich_json(st.session_state.nodes)
         st.download_button(
@@ -178,7 +200,7 @@ if st.session_state.index:
                 st.write("Keine Quelle im Chunk-Metadatum gefunden.")
     else:
         # Nach erster Antwort: Chatverlauf und Nachhaken
-        user_input = st.text_input("Frage an den Index stellen oder Nachhaken:", key="maininput")
+        user_input = st.text_input("Frage an den Index stellen:", key="maininput")
         if user_input:
             response = st.session_state.index.as_query_engine(similarity_top_k=3).query(user_input)
             antwort = response.response if hasattr(response, "response") else str(response)
@@ -201,7 +223,6 @@ if st.session_state.index:
             else:
                 st.write("Keine Quelle im Chunk-Metadatum gefunden.")
 
-        # Chatverlauf anzeigen
         st.subheader("Chatverlauf dieser Sitzung")
         for i, entry in enumerate(st.session_state.chat_history):
             st.markdown(f"**Frage {i+1}:** {entry['frage']}")
@@ -210,5 +231,31 @@ if st.session_state.index:
             for source in entry["quellen"]:
                 st.markdown(f"- {source}")
 
+        # Nachhaken-Feld
+        st.subheader("Nachhaken zur letzten Antwort")
+        followup = st.text_input("Nachhaken (bezieht sich auf die letzte Antwort):", key="followup")
+        if followup:
+            last_answer = st.session_state.chat_history[-1]["antwort"]
+            followup_prompt = f"Vorherige Antwort: {last_answer}\nNachhaken: {followup}"
+            response = st.session_state.index.as_query_engine(similarity_top_k=3).query(followup_prompt)
+            antwort = response.response if hasattr(response, "response") else str(response)
+            unique_sources = set(
+                node.metadata.get('source', 'unbekannt')
+                for node in response.source_nodes
+                if node.metadata.get('source', '').strip()
+            )
+            st.write("Antwort auf Nachhaken:")
+            st.write(antwort)
+            st.write("Quellen:")
+            if unique_sources:
+                for source in unique_sources:
+                    st.write(f"- {source}")
+            else:
+                st.write("Keine Quelle im Chunk-Metadatum gefunden.")
+            st.session_state.chat_history.append({
+                "frage": followup_prompt,
+                "antwort": antwort,
+                "quellen": list(unique_sources)
+            })
 else:
     st.info("Der Index wird beim Start automatisch aus GitHub geladen. Sobald er bereit ist, kannst du den Chat nutzen.")
