@@ -2,7 +2,9 @@ import streamlit as st
 import json
 import uuid
 import re
+import shutil
 import os
+import zipfile
 from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.schema import TextNode
@@ -44,6 +46,14 @@ def index_to_rich_json(nodes):
             })
     return json.dumps(export, ensure_ascii=False, indent=2)
 
+def zip_directory(folder_path, zip_path):
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                abs_path = os.path.join(root, file)
+                rel_path = os.path.relpath(abs_path, folder_path)
+                zipf.write(abs_path, rel_path)
+
 st.header("Schritt 1: URLs eingeben und Index erzeugen")
 
 urls_input = st.text_area("Neue URLs (eine pro Zeile):")
@@ -70,13 +80,24 @@ if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
     st.header("Schritt 2: Vektorindex erzeugen und herunterladen")
     if st.button("Vektorindex aus erzeugtem JSON bauen"):
         with st.spinner("Erzeuge Vektorindex... (kann einige Minuten dauern)"):
+            # Erzeuge und speichere Vektorindex im neuen Format
             index = VectorStoreIndex(st.session_state.generated_nodes)
-            index.save_to_disk("dnblab_index.llama")
-        with open("dnblab_index.llama", "rb") as f:
+            persist_dir = "dnblab_index"
+            if os.path.exists(persist_dir):
+                shutil.rmtree(persist_dir)
+            index.storage_context.persist(persist_dir=persist_dir)
+            # Zippe das Verzeichnis für den Download
+            zip_path = "dnblab_index.zip"
+            zip_directory(persist_dir, zip_path)
+        with open(zip_path, "rb") as f:
             st.download_button(
-                label="Vektorindex herunterladen (dnblab_index.llama)",
+                label="Vektorindex herunterladen (dnblab_index.zip)",
                 data=f,
-                file_name="dnblab_index.llama",
-                mime="application/octet-stream"
+                file_name="dnblab_index.zip",
+                mime="application/zip"
             )
         st.success("Vektorindex wurde erzeugt und steht zum Download bereit!")
+
+        # Aufräumen (optional, falls du nicht mehrere Nutzer hast)
+        # shutil.rmtree(persist_dir)
+        # os.remove(zip_path)
