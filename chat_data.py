@@ -30,13 +30,19 @@ def fetch_index_from_github():
         data = r.json()
         nodes = []
         for entry in data:
-            # Nur Felder verwenden, die der TextNode-Konstruktor erwartet!
+            # Nur Nodes mit nicht-leerem Text laden!
+            text = entry.get("text", "")
+            if not isinstance(text, str) or not text.strip():
+                continue
             node = TextNode(
-                text=entry.get("text", ""),
+                text=text,
                 metadata=entry.get("metadata", {}),
-                id_=entry.get("id")  # id_ statt id!
+                id_=entry.get("id")
             )
             nodes.append(node)
+        if not nodes:
+            st.error("Der geladene Index enthält keine gültigen Text-Chunks.")
+            return None, None
         index = VectorStoreIndex(nodes)
         return index, nodes
     else:
@@ -50,7 +56,13 @@ def create_rich_index(urls):
     for doc in documents:
         doc.metadata["source"] = doc.metadata.get("url", "")
         doc.metadata["title"] = doc.metadata.get("title", "")
-        nodes.extend(parser.get_nodes_from_documents([doc]))
+        # Nur Chunks mit echtem Text
+        for node in parser.get_nodes_from_documents([doc]):
+            if node.text and node.text.strip():
+                nodes.append(node)
+    if not nodes:
+        st.error("Kein Text in den geladenen URLs gefunden.")
+        return None, None
     index = VectorStoreIndex(nodes)
     return index, nodes
 
@@ -73,18 +85,19 @@ urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
 if urls and st.button("Neuen Index erstellen"):
     with st.spinner("Index wird erstellt..."):
         index, nodes = create_rich_index(urls)
-        st.session_state.index = index
-        st.session_state.nodes = nodes
-        st.session_state.index_source = "custom"
-        st.success(f"Neuer Index mit {len(nodes)} Chunks aus {len(urls)} URLs erstellt!")
-        # Download-Button für neuen Index
-        json_data = index_to_rich_json(nodes)
-        st.download_button(
-            label="Neuen Index als JSON herunterladen",
-            data=json_data,
-            file_name="dnblab_index.json",
-            mime="application/json"
-        )
+        if index is not None:
+            st.session_state.index = index
+            st.session_state.nodes = nodes
+            st.session_state.index_source = "custom"
+            st.success(f"Neuer Index mit {len(nodes)} Chunks aus {len(urls)} URLs erstellt!")
+            # Download-Button für neuen Index
+            json_data = index_to_rich_json(nodes)
+            st.download_button(
+                label="Neuen Index als JSON herunterladen",
+                data=json_data,
+                file_name="dnblab_index.json",
+                mime="application/json"
+            )
 else:
     # Wenn kein neuer Index, lade aus GitHub (nur einmal pro Session)
     if st.session_state.index is None or st.session_state.index_source != "github":
