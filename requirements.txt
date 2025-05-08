@@ -13,3 +13,4 @@ llama-index-embeddings-openai
 llama-index
 llama-index-readers-web
 nest-asyncio
+trafilatura
