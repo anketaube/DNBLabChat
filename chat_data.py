@@ -73,9 +73,11 @@ def create_rich_nodes(urls):
         for node in parser.get_nodes_from_documents([doc]):
             node_id = node.node_id if is_valid_id(node.node_id) else str(uuid.uuid4())
             if node.text and node.text.strip():
+                chunk_metadata = dict(node.metadata)  # Kopie!
+                chunk_metadata["source"] = url  # Explizit setzen!
                 nodes.append(TextNode(
                     text=node.text,
-                    metadata=node.metadata,
+                    metadata=chunk_metadata,
                     id_=node_id
                 ))
     return nodes
