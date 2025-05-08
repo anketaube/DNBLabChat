@@ -32,9 +32,9 @@ def fetch_index_from_github():
         for entry in data:
             # Nur Felder verwenden, die der TextNode-Konstruktor erwartet!
             node = TextNode(
-                text=entry["text"],
+                text=entry.get("text", ""),
                 metadata=entry.get("metadata", {}),
-                id_=entry.get("id")
+                id_=entry.get("id")  # id_ statt id!
             )
             nodes.append(node)
         index = VectorStoreIndex(nodes)
@@ -44,15 +44,12 @@ def fetch_index_from_github():
         return None, None
 
 def create_rich_index(urls):
-    # Komplette Webseiten mit Trafilatura laden
     documents = TrafilaturaWebReader().load_data(urls)
     parser = SimpleNodeParser()
     nodes = []
     for doc in documents:
-        # Metadaten ergänzen
         doc.metadata["source"] = doc.metadata.get("url", "")
         doc.metadata["title"] = doc.metadata.get("title", "")
-        # Dokument in Chunks/Nodes aufteilen
         nodes.extend(parser.get_nodes_from_documents([doc]))
     index = VectorStoreIndex(nodes)
     return index, nodes
@@ -61,7 +58,7 @@ def index_to_rich_json(nodes):
     export = []
     for node in nodes:
         export.append({
-            "id": node.node_id,
+            "id": node.node_id,        # Speichere als "id"
             "text": node.text,
             "metadata": node.metadata,
         })
