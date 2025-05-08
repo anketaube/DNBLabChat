@@ -1,21 +1,23 @@
 import streamlit as st
 from llama_index.readers.web import TrafilaturaWebReader
-from llama_index.core import VectorStoreIndex, load_index_from_storage
+from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
 import nest_asyncio
 import os
 import requests
 
 nest_asyncio.apply()
 
-INDEX_FILE = "dnblab_index.json"
-GITHUB_RAW_URL = "https://raw.githubusercontent.com/anketaube/DNBLabChat/main/dnblab_index.json"
+INDEX_DIR = "dnblab_index"
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/anketaube/DNBLabChat/main/dnblab_index.zip"
 
-def download_index_from_github():
-    if not os.path.exists(INDEX_FILE):
+def download_and_extract_index():
+    if not os.path.exists(INDEX_DIR):
         r = requests.get(GITHUB_RAW_URL)
         if r.status_code == 200:
-            with open(INDEX_FILE, "wb") as f:
-                f.write(r.content)
+            import zipfile
+            import io
+            with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+                z.extractall(INDEX_DIR)
             return True
     return False
 
@@ -24,22 +26,22 @@ def create_index(urls):
     for url, doc in zip(urls, documents):
         doc.metadata = {"source": url}
     index = VectorStoreIndex.from_documents(documents)
-    index.save_to_disk(INDEX_FILE)
+    index.storage_context.persist(persist_dir=INDEX_DIR)  # Speichern im Verzeichnis
     return index
 
 def load_index():
-    from llama_index.core import load_index_from_disk
-    return load_index_from_disk(INDEX_FILE)
+    storage_context = StorageContext.from_defaults(persist_dir=INDEX_DIR)
+    return load_index_from_storage(storage_context)
 
 st.title("DNB Lab Chat – Index Builder mit GitHub-Speicherung")
 
 # Beim Start versuchen, Index von GitHub zu laden
-if download_index_from_github():
+if download_and_extract_index():
     st.info("Index aus GitHub geladen.")
 
 # Index laden, falls vorhanden
 index = None
-if os.path.exists(INDEX_FILE):
+if os.path.exists(INDEX_DIR):
     try:
         index = load_index()
         st.session_state.index = index
@@ -55,8 +57,8 @@ if urls and st.button("Index mit neuen URLs erstellen und speichern"):
         try:
             index = create_index(urls)
             st.session_state.index = index
-            st.success(f"Index mit {len(urls)} URLs erstellt und als Datei gespeichert!")
-            st.info("Bitte lade die Datei dnblab_index.json manuell in dein GitHub-Repo hoch, um sie zu teilen.")
+            st.success(f"Index mit {len(urls)} URLs erstellt und als Verzeichnis gespeichert!")
+            st.info("Bitte lade das Verzeichnis dnblab_index als ZIP in dein GitHub-Repo hoch, um es zu teilen.")
         except Exception as e:
             st.error(f"Fehler beim Erstellen des Index: {e}")
 
@@ -71,8 +73,7 @@ if "index" in st.session_state:
         for source in unique_sources:
             st.write(f"- {source}")
 
-# Hinweis für den Nutzer
 st.markdown("""
 **Hinweis:**  
-Nach dem Erstellen eines neuen Index muss die Datei `dnblab_index.json` manuell in das GitHub-Repository [anketaube/DNBLabChat](https://github.com/anketaube/DNBLabChat/tree/main) hochgeladen werden, damit andere Nutzer die aktuelle Version nutzen können.
+Nach dem Erstellen eines neuen Index muss das Verzeichnis `dnblab_index` gezippt und manuell in das GitHub-Repository [anketaube/DNBLabChat](https://github.com/anketaube/DNBLabChat/tree/main) hochgeladen werden.
 """)
