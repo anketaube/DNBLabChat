@@ -34,6 +34,7 @@ def load_nodes_from_json(data):
             continue
         if not is_valid_id(id_val):
             id_val = str(uuid.uuid4())
+        # Quelle aus metadata übernehmen oder aus Text extrahieren
         if not metadata.get("source"):
             url = extract_url_from_text(text)
             metadata["source"] = url if url else ""
@@ -100,19 +101,10 @@ for key, default in [
     if key not in st.session_state:
         st.session_state[key] = default
 
-# --- Initiales Laden aus GitHub beim Start (nur, wenn noch kein Index geladen ist) ---
-if not st.session_state.nodes and st.session_state.index_source == "github":
-    with st.spinner("Lade Index aus GitHub..."):
-        index, nodes = fetch_index_from_github()
-        if index:
-            st.session_state.index = index
-            st.session_state.nodes = nodes
-            st.success(f"Index aus GitHub geladen ({len(nodes)} Chunks).")
-
 # --- SIDEBAR: Index-Funktionen ---
 with st.sidebar:
     st.header("Index-Funktionen")
-    st.write("1. **URLs indexieren und als neue JSON speichern**\n2. **URLs zum bestehenden Index hinzufügen**\n3. **Kombinierten Index herunterladen**")
+    st.write("1. **URLs indexieren und als neue JSON speichern**\n2. **URLs zum bestehenden Index hinzufügen**\n3. **Eigenen Index laden**\n4. **Kombinierten Index herunterladen**")
     st.markdown("---")
 
     # 1. Neue JSON nur aus URLs bauen
@@ -127,7 +119,7 @@ with st.sidebar:
                 st.download_button(
                     label="Nur neuen Index als JSON herunterladen",
                     data=json_data,
-                    file_name="dnblab_index_neu.json",
+                    file_name="dnblab_index.json",  # Für GitHub-Ersatz!
                     mime="application/json"
                 )
             else:
@@ -159,7 +151,23 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # 3. Download-Button für den kombinierten Index
+    # 3. Eigenen Index laden (optional)
+    st.subheader("Eigenen Index laden (optional)")
+    uploaded_file = st.file_uploader("JSON-Datei auswählen", type=["json"])
+    if uploaded_file is not None:
+        data = json.load(uploaded_file)
+        nodes = load_nodes_from_json(data)
+        if nodes:
+            st.session_state.nodes = nodes
+            st.session_state.index = VectorStoreIndex(nodes)
+            st.session_state.index_source = "uploaded"
+            st.success(f"Index aus Datei geladen ({len(nodes)} Chunks).")
+        else:
+            st.error("Die Datei enthält keine gültigen Chunks.")
+
+    st.markdown("---")
+
+    # 4. Download-Button für den kombinierten Index
     if st.session_state.nodes:
         json_data = index_to_rich_json(st.session_state.nodes)
         st.download_button(
@@ -168,6 +176,15 @@ with st.sidebar:
             file_name="dnblab_index.json",
             mime="application/json"
         )
+
+# --- Initiales Laden aus GitHub beim Start (nur, wenn noch kein Index geladen ist) ---
+if not st.session_state.nodes and st.session_state.index_source == "github":
+    with st.spinner("Lade Index aus GitHub..."):
+        index, nodes = fetch_index_from_github()
+        if index:
+            st.session_state.index = index
+            st.session_state.nodes = nodes
+            st.success(f"Index aus GitHub geladen ({len(nodes)} Chunks).")
 
 # --- HAUPTBEREICH: Chat ---
 st.header("Chat mit dem Index")
