@@ -5,6 +5,7 @@ import nest_asyncio
 from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import SimpleNodeParser
+from llama_index.core.schema import TextNode
 
 nest_asyncio.apply()
 
@@ -27,15 +28,13 @@ def fetch_index_from_github():
     r = requests.get(GITHUB_JSON_URL)
     if r.status_code == 200:
         data = r.json()
-        # Dokumente/Nodess nachbauen
-        from llama_index.core.schema import Document, NodeWithScore, TextNode
         nodes = []
         for entry in data:
-            # Kompatibel mit unserem Export
+            # Nur Felder verwenden, die der TextNode-Konstruktor erwartet!
             node = TextNode(
                 text=entry["text"],
                 metadata=entry.get("metadata", {}),
-                id_=entry.get("id", None)
+                id_=entry.get("id")
             )
             nodes.append(node)
         index = VectorStoreIndex(nodes)
@@ -108,7 +107,6 @@ if st.session_state.index:
         response = st.session_state.index.as_query_engine(similarity_top_k=3).query(user_input)
         antwort = response.response if hasattr(response, "response") else str(response)
         unique_sources = set(node.metadata.get('source', 'unbekannt') for node in response.source_nodes)
-        quellen = "\n".join(f"- {source}" for source in unique_sources)
         st.session_state.chat_history.append({
             "frage": user_input,
             "antwort": antwort,
