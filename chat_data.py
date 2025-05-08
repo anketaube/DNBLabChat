@@ -4,18 +4,18 @@ import json
 import nest_asyncio
 from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.core import VectorStoreIndex
+from llama_index.core.node_parser import SimpleNodeParser
 
 nest_asyncio.apply()
 
-# GitHub-Rohlink zur JSON-Datei (hier ggf. anpassen)
 GITHUB_JSON_URL = "https://raw.githubusercontent.com/anketaube/DNBLabChat/main/dnblab_index.json"
 
-st.title("DNB Lab Chat – mit GitHub-Index, Download & Chatverlauf")
+st.title("DNB Lab Chat – Volltext-Index, Chunking & Download")
 
 # --- Session-State-Initialisierung ---
 for key, default in [
     ("index", None),
-    ("documents", None),
+    ("nodes", None),
     ("index_source", "github"),
     ("chat_history", []),
 ]:
@@ -23,32 +23,48 @@ for key, default in [
         st.session_state[key] = default
 
 def fetch_index_from_github():
-    """Lade Index als JSON von GitHub und baue einen einfachen Index."""
+    """Lade Index als JSON von GitHub und baue einen Index mit allen Chunks."""
     r = requests.get(GITHUB_JSON_URL)
     if r.status_code == 200:
         data = r.json()
-        # Dokumente nachbauen
-        from llama_index.core.schema import Document
-        documents = [Document(text=entry["text"], metadata={"source": entry["source"]}) for entry in data]
-        index = VectorStoreIndex.from_documents(documents)
-        return index, documents
+        # Dokumente/Nodess nachbauen
+        from llama_index.core.schema import Document, NodeWithScore, TextNode
+        nodes = []
+        for entry in data:
+            # Kompatibel mit unserem Export
+            node = TextNode(
+                text=entry["text"],
+                metadata=entry.get("metadata", {}),
+                id_=entry.get("id", None)
+            )
+            nodes.append(node)
+        index = VectorStoreIndex(nodes)
+        return index, nodes
     else:
         st.error("Konnte Index nicht von GitHub laden.")
         return None, None
 
-def create_index(urls):
+def create_rich_index(urls):
+    # Komplette Webseiten mit Trafilatura laden
     documents = TrafilaturaWebReader().load_data(urls)
-    for url, doc in zip(urls, documents):
-        doc.metadata = {"source": url}
-    index = VectorStoreIndex.from_documents(documents)
-    return index, documents
-
-def index_to_json(documents):
-    export = []
+    parser = SimpleNodeParser()
+    nodes = []
     for doc in documents:
+        # Metadaten ergänzen
+        doc.metadata["source"] = doc.metadata.get("url", "")
+        doc.metadata["title"] = doc.metadata.get("title", "")
+        # Dokument in Chunks/Nodes aufteilen
+        nodes.extend(parser.get_nodes_from_documents([doc]))
+    index = VectorStoreIndex(nodes)
+    return index, nodes
+
+def index_to_rich_json(nodes):
+    export = []
+    for node in nodes:
         export.append({
-            "text": doc.text,
-            "source": doc.metadata.get("source", "")
+            "id": node.node_id,
+            "text": node.text,
+            "metadata": node.metadata,
         })
     return json.dumps(export, ensure_ascii=False, indent=2)
 
@@ -60,13 +76,13 @@ urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
 # Nur wenn URLs eingegeben werden, neuen Index bauen
 if urls and st.button("Neuen Index erstellen"):
     with st.spinner("Index wird erstellt..."):
-        index, documents = create_index(urls)
+        index, nodes = create_rich_index(urls)
         st.session_state.index = index
-        st.session_state.documents = documents
+        st.session_state.nodes = nodes
         st.session_state.index_source = "custom"
-        st.success(f"Neuer Index mit {len(urls)} URLs erstellt!")
+        st.success(f"Neuer Index mit {len(nodes)} Chunks aus {len(urls)} URLs erstellt!")
         # Download-Button für neuen Index
-        json_data = index_to_json(documents)
+        json_data = index_to_rich_json(nodes)
         st.download_button(
             label="Neuen Index als JSON herunterladen",
             data=json_data,
@@ -77,24 +93,22 @@ else:
     # Wenn kein neuer Index, lade aus GitHub (nur einmal pro Session)
     if st.session_state.index is None or st.session_state.index_source != "github":
         with st.spinner("Lade Index aus GitHub..."):
-            index, documents = fetch_index_from_github()
+            index, nodes = fetch_index_from_github()
             if index:
                 st.session_state.index = index
-                st.session_state.documents = documents
+                st.session_state.nodes = nodes
                 st.session_state.index_source = "github"
-                st.success("Index aus GitHub geladen.")
+                st.success(f"Index aus GitHub geladen ({len(nodes)} Chunks).")
 
 # Chat-UI
 if st.session_state.index:
     st.subheader("Chat mit dem Index")
     user_input = st.text_input("Frage an den Index stellen:")
     if user_input:
-        # Kontext: Chatverlauf als Prompt (optional, je nach LLM-Backend)
         response = st.session_state.index.as_query_engine(similarity_top_k=3).query(user_input)
         antwort = response.response if hasattr(response, "response") else str(response)
         unique_sources = set(node.metadata.get('source', 'unbekannt') for node in response.source_nodes)
         quellen = "\n".join(f"- {source}" for source in unique_sources)
-        # Verlauf speichern
         st.session_state.chat_history.append({
             "frage": user_input,
             "antwort": antwort,
@@ -120,7 +134,6 @@ if st.session_state.index:
     if st.session_state.chat_history:
         followup = st.text_input("Nachhaken (bezieht sich auf die letzte Antwort):", key="followup")
         if followup:
-            # Optional: Kombiniere letzte Antwort als Kontext
             last_answer = st.session_state.chat_history[-1]["antwort"]
             followup_prompt = f"Vorherige Antwort: {last_answer}\nNachhaken: {followup}"
             response = st.session_state.index.as_query_engine(similarity_top_k=3).query(followup_prompt)
@@ -131,7 +144,6 @@ if st.session_state.index:
             st.write("Quellen:")
             for source in unique_sources:
                 st.write(f"- {source}")
-            # Verlauf erweitern
             st.session_state.chat_history.append({
                 "frage": followup_prompt,
                 "antwort": antwort,
