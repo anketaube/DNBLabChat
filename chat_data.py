@@ -12,7 +12,8 @@ nest_asyncio.apply()
 
 GITHUB_JSON_URL = "https://raw.githubusercontent.com/anketaube/DNBLabChat/main/dnblab_index.json"
 
-st.title("DNB Lab Chat – Automatischer GitHub-Index & Ergänzen neuer URLs")
+st.set_page_config(page_title="DNB Lab Chat", layout="wide")
+st.title("DNB Lab Chat")
 
 # --- Session-State-Initialisierung ---
 for key, default in [
@@ -38,7 +39,6 @@ def load_nodes_from_json(data):
             continue
         if not is_valid_id(id_val):
             id_val = str(uuid.uuid4())
-        # Quelle aus metadata übernehmen, falls vorhanden
         if "source" not in metadata:
             metadata["source"] = ""
         node = TextNode(
@@ -70,7 +70,7 @@ def create_rich_nodes(urls):
     parser = SimpleNodeParser()
     nodes = []
     for url, doc in zip(urls, documents):
-        doc.metadata["source"] = url  # Quelle setzen!
+        doc.metadata["source"] = url
         doc.metadata["title"] = doc.metadata.get("title", "")
         for node in parser.get_nodes_from_documents([doc]):
             node_id = node.node_id if is_valid_id(node.node_id) else str(uuid.uuid4())
@@ -102,43 +102,46 @@ if not st.session_state.nodes and st.session_state.index_source == "github":
             st.session_state.nodes = nodes
             st.success(f"Index aus GitHub geladen ({len(nodes)} Chunks).")
 
-# --- URLs-Eingabe für neue Quellen ---
-st.subheader("Neue URLs indexieren und zum bestehenden Index hinzufügen")
-urls_input = st.text_area("Gib neue URLs ein (eine pro Zeile):")
-urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
+# --- SIDEBAR: URL-Eingabe und Index-Erweiterung ---
+with st.sidebar:
+    st.header("Index erweitern (optional)")
+    st.write("Füge neue URLs hinzu, die zum bestehenden Index ergänzt werden. Der Chat funktioniert immer mit dem aktuellen Index.")
+    urls_input = st.text_area("Neue URLs (eine pro Zeile):")
+    urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
 
-if urls and st.button("Neue URLs indexieren und hinzufügen"):
-    with st.spinner("Neue URLs werden indexiert..."):
-        new_nodes = create_rich_nodes(urls)
-        # Vermeide Duplikate: gleiche id oder gleicher Text
-        existing_ids = set(n.node_id for n in st.session_state.nodes)
-        existing_texts = set(n.text for n in st.session_state.nodes)
-        combined_nodes = st.session_state.nodes.copy()
-        added = 0
-        for node in new_nodes:
-            if node.node_id not in existing_ids and node.text not in existing_texts:
-                combined_nodes.append(node)
-                added += 1
-        if added:
-            st.session_state.nodes = combined_nodes
-            st.session_state.index = VectorStoreIndex(combined_nodes)
-            st.success(f"{added} neue Chunks hinzugefügt! Gesamt: {len(combined_nodes)}.")
-        else:
-            st.info("Keine neuen Chunks hinzugefügt (möglicherweise waren sie schon im Index).")
+    if urls and st.button("Neue URLs indexieren und hinzufügen"):
+        with st.spinner("Neue URLs werden indexiert..."):
+            new_nodes = create_rich_nodes(urls)
+            existing_ids = set(n.node_id for n in st.session_state.nodes)
+            existing_texts = set(n.text for n in st.session_state.nodes)
+            combined_nodes = st.session_state.nodes.copy()
+            added = 0
+            for node in new_nodes:
+                if node.node_id not in existing_ids and node.text not in existing_texts:
+                    combined_nodes.append(node)
+                    added += 1
+            if added:
+                st.session_state.nodes = combined_nodes
+                st.session_state.index = VectorStoreIndex(combined_nodes)
+                st.success(f"{added} neue Chunks hinzugefügt! Gesamt: {len(combined_nodes)}.")
+            else:
+                st.info("Keine neuen Chunks hinzugefügt (möglicherweise waren sie schon im Index).")
 
-# --- Download-Button für den kombinierten Index ---
-if st.session_state.nodes:
-    json_data = index_to_rich_json(st.session_state.nodes)
-    st.download_button(
-        label="Kombinierten Index als JSON herunterladen",
-        data=json_data,
-        file_name="dnblab_index.json",
-        mime="application/json"
-    )
+    # Download-Button für den kombinierten Index
+    if st.session_state.nodes:
+        json_data = index_to_rich_json(st.session_state.nodes)
+        st.download_button(
+            label="Kombinierten Index als JSON herunterladen",
+            data=json_data,
+            file_name="dnblab_index.json",
+            mime="application/json"
+        )
 
-# --- Chat-UI ---
+# --- HAUPTBEREICH: Chat ---
+st.header("Chat mit dem Index")
+st.write("Stelle Fragen zum geladenen Index. Quellen werden bei der Antwort angezeigt. Nachhaken ist möglich.")
+
 if st.session_state.index:
-    st.subheader("Chat mit dem Index")
     user_input = st.text_input("Frage an den Index stellen:")
     if user_input:
         response = st.session_state.index.as_query_engine(similarity_top_k=3).query(user_input)
@@ -198,3 +201,6 @@ if st.session_state.index:
                 "antwort": antwort,
                 "quellen": list(unique_sources)
             })
+else:
+    st.info("Der Index wird beim Start automatisch aus GitHub geladen. Sobald er bereit ist, kannst du den Chat nutzen.")
+
