@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import nest_asyncio
+import uuid
 from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import SimpleNodeParser
@@ -23,6 +24,9 @@ for key, default in [
     if key not in st.session_state:
         st.session_state[key] = default
 
+def is_valid_id(id_value):
+    return isinstance(id_value, str) and id_value.strip() != ""
+
 def fetch_index_from_github():
     """Lade Index als JSON von GitHub und baue einen Index mit allen Chunks."""
     r = requests.get(GITHUB_JSON_URL)
@@ -30,14 +34,18 @@ def fetch_index_from_github():
         data = r.json()
         nodes = []
         for entry in data:
-            # Nur Nodes mit nicht-leerem Text laden!
             text = entry.get("text", "")
+            id_val = entry.get("id")
+            # Nur Nodes mit nicht-leerem Text und gültiger id!
             if not isinstance(text, str) or not text.strip():
                 continue
+            if not is_valid_id(id_val):
+                # Generiere eine neue UUID, falls id fehlt oder ungültig ist
+                id_val = str(uuid.uuid4())
             node = TextNode(
                 text=text,
                 metadata=entry.get("metadata", {}),
-                id_=entry.get("id")
+                id_=id_val
             )
             nodes.append(node)
         if not nodes:
@@ -56,10 +64,15 @@ def create_rich_index(urls):
     for doc in documents:
         doc.metadata["source"] = doc.metadata.get("url", "")
         doc.metadata["title"] = doc.metadata.get("title", "")
-        # Nur Chunks mit echtem Text
         for node in parser.get_nodes_from_documents([doc]):
+            # Stelle sicher, dass jeder Node eine gültige id hat
+            node_id = node.node_id if is_valid_id(node.node_id) else str(uuid.uuid4())
             if node.text and node.text.strip():
-                nodes.append(node)
+                nodes.append(TextNode(
+                    text=node.text,
+                    metadata=node.metadata,
+                    id_=node_id
+                ))
     if not nodes:
         st.error("Kein Text in den geladenen URLs gefunden.")
         return None, None
@@ -69,11 +82,13 @@ def create_rich_index(urls):
 def index_to_rich_json(nodes):
     export = []
     for node in nodes:
-        export.append({
-            "id": node.node_id,        # Speichere als "id"
-            "text": node.text,
-            "metadata": node.metadata,
-        })
+        # Nur Nodes mit gültiger id exportieren
+        if is_valid_id(node.node_id) and node.text and node.text.strip():
+            export.append({
+                "id": node.node_id,
+                "text": node.text,
+                "metadata": node.metadata,
+            })
     return json.dumps(export, ensure_ascii=False, indent=2)
 
 # URLs-Eingabe
