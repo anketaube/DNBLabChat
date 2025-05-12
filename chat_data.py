@@ -11,7 +11,6 @@ from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.schema import TextNode
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
-from llama_index.llms.mistralai import MistralAI
 
 st.set_page_config(page_title="DNB Lab Index Generator", layout="wide")
 st.title("DNB Lab: JSON- und Vektorindex aus URLs erzeugen & Chat mit vorbereitetem Index")
@@ -57,7 +56,7 @@ def zip_directory(folder_path, zip_path):
                 rel_path = os.path.relpath(abs_path, folder_path)
                 zipf.write(abs_path, rel_path)
 
-# --- Schritt 1: URLs zu Index ---
+# Schritt 1: URLs zu Index
 st.header("Schritt 1: URLs eingeben und Index erzeugen")
 urls_input = st.text_area("Neue URLs (eine pro Zeile):")
 urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
@@ -80,7 +79,7 @@ if urls and st.button("Index aus URLs erzeugen"):
             mime="application/json"
         )
 
-# --- Schritt 2: Index als ZIP ---
+# Schritt 2: Index als ZIP
 if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
     st.header("Schritt 2: Vektorindex erzeugen und herunterladen")
     if st.button("Vektorindex aus erzeugtem JSON bauen"):
@@ -105,7 +104,7 @@ if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
             # shutil.rmtree(persist_dir)
             # os.remove(zip_path)
 
-# --- Schritt 3: Chat mit vorbereitetem Index aus GitHub ---
+# Schritt 3: Chat mit vorbereitetem Index aus GitHub
 st.header("Schritt 3: Chat mit vorbereitetem Index aus GitHub")
 
 def load_index_from_github_zip():
@@ -136,6 +135,7 @@ if "index" in st.session_state and st.session_state.index:
     if not mistral_api_key:
         st.warning("Bitte MISTRAL_API_KEY in den Streamlit-Secrets hinterlegen.")
     else:
+        from llama_index.llms.mistralai import MistralAI
         llm = MistralAI(api_key=mistral_api_key)
         query_engine = st.session_state.index.as_query_engine(llm=llm, similarity_top_k=3)
 
@@ -148,8 +148,17 @@ if "index" in st.session_state and st.session_state.index:
         if user_input:
             st.session_state.chat_history.append({"user": user_input, "bot": "..."})
             with st.spinner("Antwort wird generiert..."):
-                response = query_engine.query(user_input)
-            st.session_state.chat_history[-1]["bot"] = response.response
+                try:
+                    response = query_engine.query(user_input)
+                    st.session_state.chat_history[-1]["bot"] = response.response
+                except Exception as e:
+                    if "429" in str(e) or "rate limit" in str(e).lower():
+                        st.session_state.chat_history[-1]["bot"] = (
+                            "Du hast das Anfragelimit der Mistral-API erreicht. "
+                            "Bitte warte einige Minuten und versuche es erneut."
+                        )
+                    else:
+                        st.session_state.chat_history[-1]["bot"] = f"Fehler bei der Anfrage: {e}"
             st.rerun()
 else:
     st.info("Lade den vorbereiteten Index, um den Chat zu starten.")
