@@ -12,11 +12,10 @@ from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.schema import TextNode
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
 
-# ---- Embedding-Modell für Vektor-Suche explizit setzen (wichtig!) ----
+# HuggingFace-Embeddings für die Vektor-Suche explizit setzen (kein API-Key nötig)
 from llama_index.core import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
-# ----------------------------------------------------------------------
 
 st.set_page_config(page_title="DNB Lab Index Generator", layout="wide")
 st.title("DNB Lab: JSON- und Vektorindex aus URLs erzeugen & Chat mit vorbereitetem Index")
@@ -66,9 +65,8 @@ def zip_directory(folder_path, zip_path):
 st.header("Schritt 1: URLs eingeben und Index erzeugen")
 
 urls_input = st.text_area("Neue URLs (eine pro Zeile):")
-all_lines = [u.strip() for u in urls_input.split('\n') if u.strip()]
-urls = [u for u in all_lines if u.startswith("http")]
-invalid_lines = [u for u in all_lines if not u.startswith("http")]
+urls = [u.strip() for u in urls_input.split('\n') if u.strip() and u.strip().startswith("http")]
+invalid_lines = [u for u in urls_input.split('\n') if u.strip() and not u.strip().startswith("http")]
 if invalid_lines:
     st.warning(f"Diese Zeilen wurden ignoriert, da sie keine gültigen URLs sind: {invalid_lines}")
 
@@ -119,35 +117,16 @@ if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
 st.header("Schritt 3: Chat mit vorbereitetem Index aus GitHub")
 
 def load_index_from_github_zip():
-    # Hole die Dateiliste aus dem Repo
-    API_URL = "https://api.github.com/repos/anketaube/DNBLabChat/contents/"
+    ZIP_URL = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.zip"
     extract_dir = "dnblab_index_github"
+    # Lade und entpacke ZIP nur, wenn noch nicht vorhanden
     if not os.path.exists(extract_dir):
-        response = requests.get(API_URL)
+        response = requests.get(ZIP_URL)
         if response.status_code != 200:
-            st.error("Fehler beim Abrufen der Dateiliste von GitHub.")
+            st.error("Fehler beim Laden des Index.")
             return None
-        files = response.json()
-        # Suche nach ZIP-Datei, die mit dnblab_index beginnt
-        zip_file_url = None
-        for f in files:
-            if f["name"].startswith("dnblab_index") and f["name"].endswith(".zip"):
-                zip_file_url = f["download_url"]
-                break
-        if not zip_file_url:
-            st.error("Keine passende dnblab_index*.zip-Datei im GitHub-Repo gefunden!")
-            return None
-        # Lade die ZIP-Datei herunter
-        response = requests.get(zip_file_url)
-        if response.status_code != 200:
-            st.error("Fehler beim Laden der Index-ZIP-Datei von GitHub.")
-            return None
-        try:
-            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-                z.extractall(extract_dir)
-        except zipfile.BadZipFile:
-            st.error("Die geladene Datei ist keine gültige ZIP-Datei!")
-            return None
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            z.extractall(extract_dir)
     storage_context = StorageContext.from_defaults(persist_dir=extract_dir)
     index = load_index_from_storage(storage_context)
     return index
