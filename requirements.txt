@@ -14,3 +14,4 @@ llama-index
 llama-index-readers-web
 nest-asyncio
 trafilatura
+llama-index-llms-mistralai
