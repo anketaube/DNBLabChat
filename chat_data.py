@@ -58,26 +58,31 @@ def zip_directory(folder_path, zip_path):
 
 # Schritt 1: URLs zu Index
 st.header("Schritt 1: URLs eingeben und Index erzeugen")
+
 urls_input = st.text_area("Neue URLs (eine pro Zeile):")
-urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
+all_lines = [u.strip() for u in urls_input.split('\n') if u.strip()]
+urls = [u for u in all_lines if u.startswith("http")]
+invalid_lines = [u for u in all_lines if not u.startswith("http")]
+if invalid_lines:
+    st.warning(f"Diese Zeilen wurden ignoriert, da sie keine gültigen URLs sind: {invalid_lines}")
 
 if urls and st.button("Index aus URLs erzeugen"):
     with st.spinner("Indexiere URLs..."):
         nodes = create_rich_nodes(urls)
-    if not nodes:
-        st.error("Keine gültigen Chunks aus den URLs extrahiert.")
-    else:
-        st.session_state.generated_nodes = nodes
-        st.success(f"{len(nodes)} Chunks erzeugt!")
+        if not nodes:
+            st.error("Keine gültigen Chunks aus den URLs extrahiert.")
+        else:
+            st.session_state.generated_nodes = nodes
+            st.success(f"{len(nodes)} Chunks erzeugt!")
 
-        # Download JSON
-        json_data = index_to_rich_json(nodes)
-        st.download_button(
-            label="Index als JSON herunterladen (dnblab_index.json)",
-            data=json_data,
-            file_name="dnblab_index.json",
-            mime="application/json"
-        )
+    # Download JSON
+    json_data = index_to_rich_json(nodes)
+    st.download_button(
+        label="Index als JSON herunterladen (dnblab_index.json)",
+        data=json_data,
+        file_name="dnblab_index.json",
+        mime="application/json"
+    )
 
 # Schritt 2: Index als ZIP
 if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
@@ -100,37 +105,58 @@ if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
                     mime="application/zip"
                 )
             st.success("Vektorindex wurde erzeugt und steht zum Download bereit!")
-            # Optional: Aufräumen
-            # shutil.rmtree(persist_dir)
-            # os.remove(zip_path)
+    # Optional: Aufräumen
+    # shutil.rmtree(persist_dir)
+    # os.remove(zip_path)
 
 # Schritt 3: Chat mit vorbereitetem Index aus GitHub
 st.header("Schritt 3: Chat mit vorbereitetem Index aus GitHub")
 
 def load_index_from_github_zip():
-    ZIP_URL = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.zip"
+    # Hole die Dateiliste aus dem Repo
+    API_URL = "https://api.github.com/repos/anketaube/DNBLabChat/contents/"
     extract_dir = "dnblab_index_github"
-    # Lade und entpacke ZIP nur, wenn noch nicht vorhanden
     if not os.path.exists(extract_dir):
-        response = requests.get(ZIP_URL)
+        response = requests.get(API_URL)
         if response.status_code != 200:
-            st.error("Fehler beim Laden des Index.")
+            st.error("Fehler beim Abrufen der Dateiliste von GitHub.")
             return None
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-            z.extractall(extract_dir)
+        files = response.json()
+        # Suche nach ZIP-Datei, die mit dnblab_index beginnt
+        zip_file_url = None
+        for f in files:
+            if f["name"].startswith("dnblab_index") and f["name"].endswith(".zip"):
+                zip_file_url = f["download_url"]
+                break
+        if not zip_file_url:
+            st.error("Keine passende dnblab_index*.zip-Datei im GitHub-Repo gefunden!")
+            return None
+        # Lade die ZIP-Datei herunter
+        response = requests.get(zip_file_url)
+        if response.status_code != 200:
+            st.error("Fehler beim Laden der Index-ZIP-Datei von GitHub.")
+            return None
+        try:
+            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+                z.extractall(extract_dir)
+        except zipfile.BadZipFile:
+            st.error("Die geladene Datei ist keine gültige ZIP-Datei!")
+            return None
     storage_context = StorageContext.from_defaults(persist_dir=extract_dir)
     index = load_index_from_storage(storage_context)
     return index
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+
 if "chat_input" not in st.session_state:
     st.session_state.chat_input = ""
 
 if st.button("Vorbereiteten Index aus GitHub laden"):
     with st.spinner("Lade und initialisiere Index..."):
         st.session_state.index = load_index_from_github_zip()
-        st.success("Index geladen! Du kannst jetzt Fragen stellen.")
+        if st.session_state.index:
+            st.success("Index geladen! Du kannst jetzt Fragen stellen.")
 
 if "index" in st.session_state and st.session_state.index:
     mistral_api_key = st.secrets.get("MISTRAL_API_KEY", "")
@@ -164,7 +190,6 @@ if "index" in st.session_state and st.session_state.index:
                         st.session_state.chat_history[-1]["bot"] = f"Fehler bei der Anfrage: {e}"
             st.session_state.chat_input = ""
             st.rerun()
-
         # Jetzt das Widget anzeigen
         st.text_input("Deine Frage an den Index:", key="chat_input")
 else:
