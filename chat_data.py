@@ -12,34 +12,11 @@ from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.schema import TextNode
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
 
-from bs4 import BeautifulSoup
-
 st.set_page_config(page_title="DNB Lab Index Generator", layout="wide")
 st.title("DNB Lab: JSON- und Vektorindex aus URLs erzeugen & Chat mit vorbereitetem Index")
 
 def is_valid_id(id_value):
     return isinstance(id_value, str) and id_value.strip() != ""
-
-def get_dnb_lab_dataset_table_text():
-    """
-    Holt die Tabelle mit den Datensets von der DNB-Lab-Seite als Klartext.
-    """
-    url = "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabFreieDigitaleObjektsammlung.html?nn=849628"
-    try:
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-        table = soup.find("table")
-        if not table:
-            return ""
-        rows = []
-        for tr in table.find_all("tr"):
-            cols = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
-            if cols:
-                rows.append(" | ".join(cols))
-        return "\n".join(rows)
-    except Exception as e:
-        return ""
 
 def create_rich_nodes(urls):
     documents = TrafilaturaWebReader().load_data(urls)
@@ -58,18 +35,6 @@ def create_rich_nodes(urls):
                     metadata=chunk_metadata,
                     id_=node_id
                 ))
-    # --- NEU: Datenset-Tabelle als eigenen Chunk hinzufügen ---
-    dnb_table_text = get_dnb_lab_dataset_table_text()
-    if dnb_table_text:
-        table_metadata = {
-            "source": "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabFreieDigitaleObjektsammlung.html?nn=849628",
-            "title": "DNB Lab: Freie digitale Objektsammlungen (Tabelle)"
-        }
-        nodes.append(TextNode(
-            text=dnb_table_text,
-            metadata=table_metadata,
-            id_=str(uuid.uuid4())
-        ))
     return nodes
 
 def index_to_rich_json(nodes):
@@ -93,27 +58,26 @@ def zip_directory(folder_path, zip_path):
 
 # Schritt 1: URLs zu Index
 st.header("Schritt 1: URLs eingeben und Index erzeugen")
-
 urls_input = st.text_area("Neue URLs (eine pro Zeile):")
 urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
 
 if urls and st.button("Index aus URLs erzeugen"):
     with st.spinner("Indexiere URLs..."):
         nodes = create_rich_nodes(urls)
-        if not nodes:
-            st.error("Keine gültigen Chunks aus den URLs extrahiert.")
-        else:
-            st.session_state.generated_nodes = nodes
-            st.success(f"{len(nodes)} Chunks erzeugt!")
+    if not nodes:
+        st.error("Keine gültigen Chunks aus den URLs extrahiert.")
+    else:
+        st.session_state.generated_nodes = nodes
+        st.success(f"{len(nodes)} Chunks erzeugt!")
 
-    # Download JSON
-    json_data = index_to_rich_json(nodes)
-    st.download_button(
-        label="Index als JSON herunterladen (dnblab_index.json)",
-        data=json_data,
-        file_name="dnblab_index.json",
-        mime="application/json"
-    )
+        # Download JSON
+        json_data = index_to_rich_json(nodes)
+        st.download_button(
+            label="Index als JSON herunterladen (dnblab_index.json)",
+            data=json_data,
+            file_name="dnblab_index.json",
+            mime="application/json"
+        )
 
 # Schritt 2: Index als ZIP
 if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
@@ -136,6 +100,9 @@ if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
                     mime="application/zip"
                 )
             st.success("Vektorindex wurde erzeugt und steht zum Download bereit!")
+            # Optional: Aufräumen
+            # shutil.rmtree(persist_dir)
+            # os.remove(zip_path)
 
 # Schritt 3: Chat mit vorbereitetem Index aus GitHub
 st.header("Schritt 3: Chat mit vorbereitetem Index aus GitHub")
@@ -157,7 +124,6 @@ def load_index_from_github_zip():
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-
 if "chat_input" not in st.session_state:
     st.session_state.chat_input = ""
 
@@ -198,6 +164,7 @@ if "index" in st.session_state and st.session_state.index:
                         st.session_state.chat_history[-1]["bot"] = f"Fehler bei der Anfrage: {e}"
             st.session_state.chat_input = ""
             st.rerun()
+
         # Jetzt das Widget anzeigen
         st.text_input("Deine Frage an den Index:", key="chat_input")
 else:
