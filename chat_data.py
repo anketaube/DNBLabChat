@@ -11,17 +11,12 @@ import io
 from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.schema import TextNode
-from llama_index.core import VectorStoreIndex, StorageContext
+from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
 from llama_index.llms.mistralai import MistralAI
 
-st.set_page_config(page_title="DNB Lab Chat", layout="wide")
-st.title("DNB Lab: Index-Generator & Chat mit Mistral")
+st.set_page_config(page_title="DNB Lab Index Generator", layout="wide")
+st.title("DNB Lab: JSON- und Vektorindex aus URLs erzeugen & Chat mit vorbereitetem Index")
 
-# --- Konfiguration ---
-MISTRAL_API_KEY = st.secrets.get("MISTRAL_API_KEY", "frei-verfügbar")
-GITHUB_INDEX_URL = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.zip"
-
-# --- Hilfsfunktionen Index-Erstellung ---
 def is_valid_id(id_value):
     return isinstance(id_value, str) and id_value.strip() != ""
 
@@ -63,92 +58,101 @@ def zip_directory(folder_path, zip_path):
                 rel_path = os.path.relpath(abs_path, folder_path)
                 zipf.write(abs_path, rel_path)
 
-# --- NEU: Chat-Funktionalität mit Mistral ---
-@st.cache_resource(show_spinner=False)
-def load_index_from_zip():
-    response = requests.get(GITHUB_INDEX_URL)
-    if response.status_code != 200:
-        st.error("Index konnte nicht geladen werden")
-        return None
-    
-    extract_dir = "dnblab_index"
-    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-        z.extractall(extract_dir)
-    
-    storage_context = StorageContext.from_defaults(persist_dir=extract_dir)
-    return VectorStoreIndex(storage_context=storage_context)
+# --- Schritt 1: URLs zu Index ---
+st.header("Schritt 1: URLs eingeben und Index erzeugen")
+urls_input = st.text_area("Neue URLs (eine pro Zeile):")
+urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
 
-def initialize_chat():
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    if "index" not in st.session_state:
-        st.session_state.index = None
-    if "llm" not in st.session_state:
-        st.session_state.llm = MistralAI(api_key=MISTRAL_API_KEY)
-
-# --- Haupt-UI ---
-tab1, tab2 = st.tabs(["📥 Index erstellen", "💬 Chat mit Index"])
-
-with tab1:
-    st.header("Vektorindex aus URLs generieren")
-    urls_input = st.text_area("URLs eingeben (eine pro Zeile):")
-    urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
-
-    if st.button("Index generieren"):
-        with st.spinner("Verarbeite URLs..."):
-            nodes = create_rich_nodes(urls)
-        if nodes:
-            st.session_state.generated_nodes = nodes
-            st.success(f"{len(nodes)} Chunks erstellt")
-            
-            # JSON Download
-            json_data = index_to_rich_json(nodes)
-            st.download_button(
-                "JSON herunterladen",
-                data=json_data,
-                file_name="dnblab_index.json"
-            )
-            
-            # Vektorindex erstellen
-            with st.spinner("Baue Vektorindex..."):
-                index = VectorStoreIndex(nodes)
-                persist_dir = "dnblab_index"
-                index.storage_context.persist(persist_dir=persist_dir)
-                zip_path = "dnblab_index.zip"
-                zip_directory(persist_dir, zip_path)
-                
-                st.download_button(
-                    "Vektorindex herunterladen",
-                    data=open(zip_path, "rb"),
-                    file_name=zip_path
-                )
-
-with tab2:
-    st.header("Chat mit vorberechnetem Index")
-    initialize_chat()
-    
-    if st.button("Index laden"):
-        with st.spinner("Lade Index von GitHub..."):
-            st.session_state.index = load_index_from_zip()
-    
-    if st.session_state.index:
-        query_engine = st.session_state.index.as_query_engine(
-            llm=st.session_state.llm,
-            similarity_top_k=3
-        )
-        
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
-        
-        if prompt := st.chat_input("Stelle eine Frage zu den indexierten Daten"):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.write(prompt)
-            
-            with st.chat_message("assistant"):
-                response = query_engine.query(prompt)
-                st.write(response.response)
-                st.session_state.messages.append({"role": "assistant", "content": response.response})
+if urls and st.button("Index aus URLs erzeugen"):
+    with st.spinner("Indexiere URLs..."):
+        nodes = create_rich_nodes(urls)
+    if not nodes:
+        st.error("Keine gültigen Chunks aus den URLs extrahiert.")
     else:
-        st.warning("Bitte zuerst Index laden")
+        st.session_state.generated_nodes = nodes
+        st.success(f"{len(nodes)} Chunks erzeugt!")
+
+        # Download JSON
+        json_data = index_to_rich_json(nodes)
+        st.download_button(
+            label="Index als JSON herunterladen (dnblab_index.json)",
+            data=json_data,
+            file_name="dnblab_index.json",
+            mime="application/json"
+        )
+
+# --- Schritt 2: Index als ZIP ---
+if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
+    st.header("Schritt 2: Vektorindex erzeugen und herunterladen")
+    if st.button("Vektorindex aus erzeugtem JSON bauen"):
+        with st.spinner("Erzeuge Vektorindex... (kann einige Minuten dauern)"):
+            index = VectorStoreIndex(st.session_state.generated_nodes)
+            persist_dir = "dnblab_index"
+            if os.path.exists(persist_dir):
+                shutil.rmtree(persist_dir)
+            index.storage_context.persist(persist_dir=persist_dir)
+            # Zippe das Verzeichnis für den Download
+            zip_path = "dnblab_index.zip"
+            zip_directory(persist_dir, zip_path)
+            with open(zip_path, "rb") as f:
+                st.download_button(
+                    label="Vektorindex herunterladen (dnblab_index.zip)",
+                    data=f,
+                    file_name="dnblab_index.zip",
+                    mime="application/zip"
+                )
+            st.success("Vektorindex wurde erzeugt und steht zum Download bereit!")
+            # Optional: Aufräumen
+            # shutil.rmtree(persist_dir)
+            # os.remove(zip_path)
+
+# --- Schritt 3: Chat mit vorbereitetem Index aus GitHub ---
+st.header("Schritt 3: Chat mit vorbereitetem Index aus GitHub")
+
+def load_index_from_github_zip():
+    ZIP_URL = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.zip"
+    extract_dir = "dnblab_index_github"
+    # Lade und entpacke ZIP nur, wenn noch nicht vorhanden
+    if not os.path.exists(extract_dir):
+        response = requests.get(ZIP_URL)
+        if response.status_code != 200:
+            st.error("Fehler beim Laden des Index.")
+            return None
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            z.extractall(extract_dir)
+    storage_context = StorageContext.from_defaults(persist_dir=extract_dir)
+    index = load_index_from_storage(storage_context)
+    return index
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+if st.button("Vorbereiteten Index aus GitHub laden"):
+    with st.spinner("Lade und initialisiere Index..."):
+        st.session_state.index = load_index_from_github_zip()
+        st.success("Index geladen! Du kannst jetzt Fragen stellen.")
+
+if "index" in st.session_state and st.session_state.index:
+    # Mistral LLM initialisieren
+    mistral_api_key = st.secrets.get("MISTRAL_API_KEY", "")
+    if not mistral_api_key:
+        st.warning("Bitte MISTRAL_API_KEY in den Streamlit-Secrets hinterlegen.")
+    else:
+        llm = MistralAI(api_key=mistral_api_key)
+        query_engine = st.session_state.index.as_query_engine(llm=llm, similarity_top_k=3)
+
+        st.subheader("Chat mit dem Index")
+        for entry in st.session_state.chat_history:
+            st.markdown(f"**Du:** {entry['user']}")
+            st.markdown(f"**Bot:** {entry['bot']}")
+
+        user_input = st.text_input("Deine Frage an den Index:", key="chat_input")
+        if user_input:
+            st.session_state.chat_history.append({"user": user_input, "bot": "..."})
+            with st.spinner("Antwort wird generiert..."):
+                response = query_engine.query(user_input)
+            st.session_state.chat_history[-1]["bot"] = response.response
+            st.experimental_rerun()
+else:
+    st.info("Lade den vorbereiteten Index, um den Chat zu starten.")
+
