@@ -15,4 +15,3 @@ llama-index-readers-web
 nest-asyncio
 trafilatura
 llama-index-llms-mistralai
-llama-index-embeddings-huggingface
