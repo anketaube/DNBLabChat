@@ -20,48 +20,56 @@ st.title("DNB Lab: JSON- und Vektorindex aus URLs erzeugen & Chat mit vorbereite
 def is_valid_id(id_value):
     return isinstance(id_value, str) and id_value.strip() != ""
 
-# ----------- NEU: Automatische Extraktion der Datenset-Links von der DNB-Seite -----------
-def extract_dnb_lab_dataset_urls():
-    MAIN_URL = "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabFreieDigitaleObjektsammlung.html?nn=849628"
-    resp = requests.get(MAIN_URL)
-    soup = BeautifulSoup(resp.text, "html.parser")
-    dataset_urls = []
-    dataset_titles = []
-    # Die Tabelle mit den Datensets finden (anpassen, falls sich das HTML ändert)
-    for row in soup.select("table tbody tr"):
-        cols = row.find_all("td")
-        if not cols or len(cols) < 2:
-            continue
-        title = cols[0].get_text(strip=True)
-        # Alle Links in der Zeile extrahieren
-        for a in row.find_all("a", href=True):
-            url = a["href"]
-            if url.startswith("/"):
-                url = "https://www.dnb.de" + url
-            dataset_urls.append(url)
-            dataset_titles.append(title)
-    return list(zip(dataset_urls, dataset_titles))
+def get_dnb_lab_dataset_table_text():
+    """
+    Holt die Tabelle mit den Datensets von der DNB-Lab-Seite als Klartext.
+    """
+    url = "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabFreieDigitaleObjektsammlung.html?nn=849628"
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        table = soup.find("table")
+        if not table:
+            return ""
+        rows = []
+        for tr in table.find_all("tr"):
+            cols = [td.get_text(strip=True) for td in tr.find_all(["td", "th"])]
+            if cols:
+                rows.append(" | ".join(cols))
+        return "\n".join(rows)
+    except Exception as e:
+        return ""
 
-# ----------- Angepasst: URLs und Titel als Metadaten verarbeiten -----------
-def create_rich_nodes(urls_and_titles):
-    urls, titles = zip(*urls_and_titles)
+def create_rich_nodes(urls):
     documents = TrafilaturaWebReader().load_data(urls)
     parser = SimpleNodeParser()
     nodes = []
-    for url, title, doc in zip(urls, titles, documents):
+    for url, doc in zip(urls, documents):
         doc.metadata["source"] = url
-        doc.metadata["title"] = title or doc.metadata.get("title", "")
+        doc.metadata["title"] = doc.metadata.get("title", "")
         for node in parser.get_nodes_from_documents([doc]):
             node_id = node.node_id if is_valid_id(node.node_id) else str(uuid.uuid4())
             if node.text and node.text.strip():
                 chunk_metadata = dict(node.metadata)
                 chunk_metadata["source"] = url
-                chunk_metadata["title"] = title
                 nodes.append(TextNode(
                     text=node.text,
                     metadata=chunk_metadata,
                     id_=node_id
                 ))
+    # --- NEU: Datenset-Tabelle als eigenen Chunk hinzufügen ---
+    dnb_table_text = get_dnb_lab_dataset_table_text()
+    if dnb_table_text:
+        table_metadata = {
+            "source": "https://www.dnb.de/DE/Professionell/Services/WissenschaftundForschung/DNBLab/dnblabFreieDigitaleObjektsammlung.html?nn=849628",
+            "title": "DNB Lab: Freie digitale Objektsammlungen (Tabelle)"
+        }
+        nodes.append(TextNode(
+            text=dnb_table_text,
+            metadata=table_metadata,
+            id_=str(uuid.uuid4())
+        ))
     return nodes
 
 def index_to_rich_json(nodes):
@@ -84,30 +92,14 @@ def zip_directory(folder_path, zip_path):
                 zipf.write(abs_path, rel_path)
 
 # Schritt 1: URLs zu Index
-st.header("Schritt 1: DNB-Lab-Datensets automatisch laden oder eigene URLs eingeben")
+st.header("Schritt 1: URLs eingeben und Index erzeugen")
 
-if st.button("Alle DNB-Lab-Datensets automatisch laden"):
-    with st.spinner("Extrahiere Datenset-Links von der DNB-Lab-Seite..."):
-        urls_and_titles = extract_dnb_lab_dataset_urls()
-        urls = [u for u, _ in urls_and_titles]
-        st.session_state.urls_and_titles = urls_and_titles
-        st.success(f"{len(urls)} Datenset-Links extrahiert!")
-        st.write("Beispiel-Links:", urls[:5])
+urls_input = st.text_area("Neue URLs (eine pro Zeile):")
+urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
 
-urls_input = st.text_area("Eigene/zusätzliche URLs (eine pro Zeile):")
-extra_urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
-# Titel für eigene URLs leer lassen
-extra_urls_and_titles = [(u, "") for u in extra_urls]
-
-all_urls_and_titles = []
-if "urls_and_titles" in st.session_state:
-    all_urls_and_titles.extend(st.session_state.urls_and_titles)
-if extra_urls_and_titles:
-    all_urls_and_titles.extend(extra_urls_and_titles)
-
-if all_urls_and_titles and st.button("Index aus URLs erzeugen"):
+if urls and st.button("Index aus URLs erzeugen"):
     with st.spinner("Indexiere URLs..."):
-        nodes = create_rich_nodes(all_urls_and_titles)
+        nodes = create_rich_nodes(urls)
         if not nodes:
             st.error("Keine gültigen Chunks aus den URLs extrahiert.")
         else:
@@ -144,3 +136,69 @@ if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
                     mime="application/zip"
                 )
             st.success("Vektorindex wurde erzeugt und steht zum Download bereit!")
+
+# Schritt 3: Chat mit vorbereitetem Index aus GitHub
+st.header("Schritt 3: Chat mit vorbereitetem Index aus GitHub")
+
+def load_index_from_github_zip():
+    ZIP_URL = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.zip"
+    extract_dir = "dnblab_index_github"
+    # Lade und entpacke ZIP nur, wenn noch nicht vorhanden
+    if not os.path.exists(extract_dir):
+        response = requests.get(ZIP_URL)
+        if response.status_code != 200:
+            st.error("Fehler beim Laden des Index.")
+            return None
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            z.extractall(extract_dir)
+    storage_context = StorageContext.from_defaults(persist_dir=extract_dir)
+    index = load_index_from_storage(storage_context)
+    return index
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+if "chat_input" not in st.session_state:
+    st.session_state.chat_input = ""
+
+if st.button("Vorbereiteten Index aus GitHub laden"):
+    with st.spinner("Lade und initialisiere Index..."):
+        st.session_state.index = load_index_from_github_zip()
+        st.success("Index geladen! Du kannst jetzt Fragen stellen.")
+
+if "index" in st.session_state and st.session_state.index:
+    mistral_api_key = st.secrets.get("MISTRAL_API_KEY", "")
+    if not mistral_api_key:
+        st.warning("Bitte MISTRAL_API_KEY in den Streamlit-Secrets hinterlegen.")
+    else:
+        from llama_index.llms.mistralai import MistralAI
+        llm = MistralAI(api_key=mistral_api_key)
+        query_engine = st.session_state.index.as_query_engine(llm=llm, similarity_top_k=3)
+
+        st.subheader("Chat mit dem Index")
+        for entry in st.session_state.chat_history:
+            st.markdown(f"**Du:** {entry['user']}")
+            st.markdown(f"**Bot:** {entry['bot']}")
+
+        # Verarbeitung VOR dem Widget!
+        if st.session_state.chat_input:
+            user_input = st.session_state.chat_input
+            st.session_state.chat_history.append({"user": user_input, "bot": "..."})
+            with st.spinner("Antwort wird generiert..."):
+                try:
+                    response = query_engine.query(user_input)
+                    st.session_state.chat_history[-1]["bot"] = response.response
+                except Exception as e:
+                    if "429" in str(e) or "rate limit" in str(e).lower():
+                        st.session_state.chat_history[-1]["bot"] = (
+                            "Du hast das Anfragelimit der Mistral-API erreicht. "
+                            "Bitte warte einige Minuten und versuche es erneut."
+                        )
+                    else:
+                        st.session_state.chat_history[-1]["bot"] = f"Fehler bei der Anfrage: {e}"
+            st.session_state.chat_input = ""
+            st.rerun()
+        # Jetzt das Widget anzeigen
+        st.text_input("Deine Frage an den Index:", key="chat_input")
+else:
+    st.info("Lade den vorbereiteten Index, um den Chat zu starten.")
