@@ -65,7 +65,7 @@ def zip_directory(folder_path, zip_path):
 st.header("Schritt 1: URLs eingeben und Index erzeugen")
 
 urls_input = st.text_area("Neue URLs (eine pro Zeile):")
-urls = [u.strip() for u in urls_input.split('\n') if u.strip() and u.strip().startswith("http")]
+urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
 invalid_lines = [u for u in urls_input.split('\n') if u.strip() and not u.strip().startswith("http")]
 if invalid_lines:
     st.warning(f"Diese Zeilen wurden ignoriert, da sie keine gültigen URLs sind: {invalid_lines}")
@@ -117,18 +117,44 @@ if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
 st.header("Schritt 3: Chat mit vorbereitetem Index aus GitHub")
 
 def load_index_from_github_zip():
-    ZIP_URL = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.zip"
+    # Hole die Dateiliste aus dem Repo
+    API_URL = "https://api.github.com/repos/anketaube/DNBLabChat/contents/"
     extract_dir = "dnblab_index_github"
-    # Lade und entpacke ZIP nur, wenn noch nicht vorhanden
     if not os.path.exists(extract_dir):
-        response = requests.get(ZIP_URL)
+        response = requests.get(API_URL)
         if response.status_code != 200:
-            st.error("Fehler beim Laden des Index.")
+            st.error(f"Fehler beim Abrufen der Dateiliste von GitHub. Status: {response.status_code}")
             return None
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-            z.extractall(extract_dir)
+        files = response.json()
+        # Suche nach der ersten ZIP-Datei im Repo
+        zip_file_url = None
+        for f in files:
+            if f["name"].endswith(".zip"):
+                zip_file_url = f["download_url"]
+                break
+        if not zip_file_url:
+            st.error("Keine ZIP-Datei im GitHub-Repo gefunden!")
+            return None
+        # Lade die ZIP-Datei herunter
+        response = requests.get(zip_file_url)
+        if response.status_code != 200:
+            st.error(f"Fehler beim Laden der ZIP-Datei von GitHub. Status: {response.status_code}")
+            return None
+        try:
+            with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+                z.extractall(extract_dir)
+        except zipfile.BadZipFile:
+            st.error("Die geladene Datei ist keine gültige ZIP-Datei!")
+            return None
+        except Exception as e:
+            st.error(f"Fehler beim Entpacken der ZIP-Datei: {e}")
+            return None
     storage_context = StorageContext.from_defaults(persist_dir=extract_dir)
-    index = load_index_from_storage(storage_context)
+    try:
+        index = load_index_from_storage(storage_context)
+    except Exception as e:
+        st.error(f"Fehler beim Laden des Index aus dem Storage: {e}")
+        return None
     return index
 
 if "chat_history" not in st.session_state:
