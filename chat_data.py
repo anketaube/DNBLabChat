@@ -124,6 +124,8 @@ def load_index_from_github_zip():
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "chat_input" not in st.session_state:
+    st.session_state.chat_input = ""
 
 if st.button("Vorbereiteten Index aus GitHub laden"):
     with st.spinner("Lade und initialisiere Index..."):
@@ -159,6 +161,7 @@ if "index" in st.session_state and st.session_state.index:
                         )
                     else:
                         st.session_state.chat_history[-1]["bot"] = f"Fehler bei der Anfrage: {e}"
+            st.session_state.chat_input = ""  # Input-Feld leeren!
             st.rerun()
 else:
     st.info("Lade den vorbereiteten Index, um den Chat zu starten.")
