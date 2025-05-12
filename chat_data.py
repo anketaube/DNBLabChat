@@ -1,7 +1,6 @@
 import streamlit as st
 import json
 import uuid
-import re
 import shutil
 import os
 import zipfile
@@ -133,7 +132,6 @@ if st.button("Vorbereiteten Index aus GitHub laden"):
         st.success("Index geladen! Du kannst jetzt Fragen stellen.")
 
 if "index" in st.session_state and st.session_state.index:
-    # Mistral LLM initialisieren
     mistral_api_key = st.secrets.get("MISTRAL_API_KEY", "")
     if not mistral_api_key:
         st.warning("Bitte MISTRAL_API_KEY in den Streamlit-Secrets hinterlegen.")
@@ -152,7 +150,6 @@ if "index" in st.session_state and st.session_state.index:
             with st.spinner("Antwort wird generiert..."):
                 response = query_engine.query(user_input)
             st.session_state.chat_history[-1]["bot"] = response.response
-            st.experimental_rerun()
+            st.rerun()
 else:
     st.info("Lade den vorbereiteten Index, um den Chat zu starten.")
-
