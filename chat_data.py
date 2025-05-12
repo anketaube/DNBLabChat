@@ -146,8 +146,9 @@ if "index" in st.session_state and st.session_state.index:
             st.markdown(f"**Du:** {entry['user']}")
             st.markdown(f"**Bot:** {entry['bot']}")
 
-        user_input = st.text_input("Deine Frage an den Index:", key="chat_input")
-        if user_input:
+        # Verarbeitung VOR dem Widget!
+        if st.session_state.chat_input:
+            user_input = st.session_state.chat_input
             st.session_state.chat_history.append({"user": user_input, "bot": "..."})
             with st.spinner("Antwort wird generiert..."):
                 try:
@@ -161,7 +162,10 @@ if "index" in st.session_state and st.session_state.index:
                         )
                     else:
                         st.session_state.chat_history[-1]["bot"] = f"Fehler bei der Anfrage: {e}"
-            st.session_state.chat_input = ""  # Input-Feld leeren!
+            st.session_state.chat_input = ""
             st.rerun()
+
+        # Jetzt das Widget anzeigen
+        st.text_input("Deine Frage an den Index:", key="chat_input")
 else:
     st.info("Lade den vorbereiteten Index, um den Chat zu starten.")
