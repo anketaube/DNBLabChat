@@ -12,10 +12,11 @@ from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.schema import TextNode
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
 
-# HuggingFace-Embeddings für die Vektor-Suche explizit setzen (kein API-Key nötig)
+# --- Embedding-Modell für beide Schritte setzen (wichtig!) ---
 from llama_index.core import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# -------------------------------------------------------------
 
 st.set_page_config(page_title="DNB Lab Index Generator", layout="wide")
 st.title("DNB Lab: JSON- und Vektorindex aus URLs erzeugen & Chat mit vorbereitetem Index")
