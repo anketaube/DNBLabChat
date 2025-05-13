@@ -4,14 +4,15 @@ import json
 import zipfile
 import requests
 from typing import List
-from llama_index.readers.web import TrafilaturaWebReader
-from llama_index.node_parser import SentenceSplitter
-from llama_index.schema import TextNode
-from llama_index.vector_stores import SimpleVectorStore
-from llama_index.indices.vector_store import VectorStoreIndex
+
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.schema import TextNode
+from llama_index.core.vector_stores import SimpleVectorStore
+from llama_index.core.indices.vector_store import VectorStoreIndex
 from llama_index.embeddings import resolve_embed_model
 from llama_index.llms.mistralai import MistralAI
 from llama_index.query_engine import RetrieverQueryEngine
+from llama_index.readers.web import TrafilaturaWebReader
 
 # -------------------- Seiteneinstellungen und Zusammenfassung ---------------------
 st.set_page_config(
@@ -57,7 +58,6 @@ start_option = st.radio(
 )
 
 def load_index_from_github():
-    # URL zur Rohdatei (raw) auf GitHub
     url = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.json"
     try:
         response = requests.get(url)
@@ -84,25 +84,22 @@ if start_option == "Direkt mit bestehendem Index aus GitHub starten (empfohlen f
     index = load_index_from_github()
     if index is not None:
         st.header("Schritt 3: Chat mit dem geladenen Index")
-        api_key = st.secrets.get("MISTRAL_API_KEY", None)
-        if not api_key:
-            st.error("Kein Mistral-API-Key gefunden. Bitte in den Streamlit-Secrets hinterlegen.")
-        else:
-            llm = MistralAI(api_key=api_key, model="mistral-medium")
-            query_engine = RetrieverQueryEngine.from_args(index.as_retriever(), llm=llm)
-            if "chat_history" not in st.session_state:
-                st.session_state.chat_history = []
-            user_input = st.text_input("Deine Frage an den Index:")
-            if user_input:
-                with st.spinner("Antwort wird generiert..."):
-                    try:
-                        response = query_engine.query(user_input)
-                        st.session_state.chat_history.append(("Du", user_input))
-                        st.session_state.chat_history.append(("DNBLab Chat", str(response)))
-                    except Exception as e:
-                        st.error(f"Fehler bei der Anfrage: {e}")
-            for speaker, text in st.session_state.chat_history:
-                st.markdown(f"**{speaker}:** {text}")
+        api_key = st.secrets["MISTRAL_API_KEY"]
+        llm = MistralAI(api_key=api_key, model="mistral-medium")
+        query_engine = RetrieverQueryEngine.from_args(index.as_retriever(), llm=llm)
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+        user_input = st.text_input("Deine Frage an den Index:")
+        if user_input:
+            with st.spinner("Antwort wird generiert..."):
+                try:
+                    response = query_engine.query(user_input)
+                    st.session_state.chat_history.append(("Du", user_input))
+                    st.session_state.chat_history.append(("DNBLab Chat", str(response)))
+                except Exception as e:
+                    st.error(f"Fehler bei der Anfrage: {e}")
+        for speaker, text in st.session_state.chat_history:
+            st.markdown(f"**{speaker}:** {text}")
     else:
         st.warning("Index konnte nicht geladen werden. Bitte überprüfe die GitHub-Integration.")
     st.stop()
@@ -206,24 +203,21 @@ if st.button("Lokal gespeicherten Index laden und Chat starten"):
     if index is None:
         st.error("Kein lokaler Index gefunden. Bitte erstelle oder lade einen Index.")
     else:
-        api_key = st.secrets.get("MISTRAL_API_KEY", None)
-        if not api_key:
-            st.error("Kein Mistral-API-Key gefunden. Bitte in den Streamlit-Secrets hinterlegen.")
-        else:
-            llm = MistralAI(api_key=api_key, model="mistral-medium")
-            query_engine = RetrieverQueryEngine.from_args(index.as_retriever(), llm=llm)
-            if "chat_history" not in st.session_state:
-                st.session_state.chat_history = []
-            user_input = st.text_input("Deine Frage an den Index:")
-            if user_input:
-                with st.spinner("Antwort wird generiert..."):
-                    try:
-                        response = query_engine.query(user_input)
-                        st.session_state.chat_history.append(("Du", user_input))
-                        st.session_state.chat_history.append(("DNBLab Chat", str(response)))
-                    except Exception as e:
-                        st.error(f"Fehler bei der Anfrage: {e}")
-            for speaker, text in st.session_state.chat_history:
-                st.markdown(f"**{speaker}:** {text}")
+        api_key = st.secrets["MISTRAL_API_KEY"]
+        llm = MistralAI(api_key=api_key, model="mistral-medium")
+        query_engine = RetrieverQueryEngine.from_args(index.as_retriever(), llm=llm)
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+        user_input = st.text_input("Deine Frage an den Index:")
+        if user_input:
+            with st.spinner("Antwort wird generiert..."):
+                try:
+                    response = query_engine.query(user_input)
+                    st.session_state.chat_history.append(("Du", user_input))
+                    st.session_state.chat_history.append(("DNBLab Chat", str(response)))
+                except Exception as e:
+                    st.error(f"Fehler bei der Anfrage: {e}")
+        for speaker, text in st.session_state.chat_history:
+            st.markdown(f"**{speaker}:** {text}")
 
 st.info("Du kannst nach Schritt 2 direkt mit dem Chat starten oder jederzeit einen bestehenden Index aus GitHub laden.")
