@@ -6,4 +6,4 @@ llama-index-embeddings-huggingface
 sentence-transformers
 requests
 openpyxl
-
+trafilatura
