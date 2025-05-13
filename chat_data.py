@@ -10,7 +10,7 @@ from llama_index.core.schema import TextNode
 from llama_index.core.vector_stores import SimpleVectorStore
 from llama_index.core.indices.vector_store import VectorStoreIndex
 from llama_index.llms.mistralai import MistralAI
-from llama_index.query_engine import RetrieverQueryEngine
+from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.readers.web import TrafilaturaWebReader
 from sentence_transformers import SentenceTransformer
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
