@@ -13,8 +13,7 @@ from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.llms.mistralai import MistralAI
 from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.core import StorageContext
-from llama_index.core import load_index_from_storage
+from llama_index.core import StorageContext, load_index_from_storage, ServiceContext
 from sentence_transformers import SentenceTransformer
 
 # -------------------- Seiteneinstellungen und Zusammenfassung ---------------------
@@ -179,22 +178,22 @@ def load_local_index():
     persist_dir = "dnblab_index"
     if os.path.exists(persist_dir):
         storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
-        index = load_index_from_storage(storage_context)
+        embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        service_context = ServiceContext.from_defaults(embed_model=embed_model)
+        index = load_index_from_storage(storage_context, service_context=service_context)
         return index
     return None
 
 chat_index = None
 chat_index_source = None
 
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("Index aus GitHub laden"):
-        chat_index = load_index_from_github()
-        chat_index_source = "GitHub"
-with col2:
-    if st.button("Gerade erzeugten lokalen Index verwenden"):
-        chat_index = load_local_index()
-        chat_index_source = "lokal"
+# Buttons untereinander platzieren
+if st.button("Index aus GitHub laden"):
+    chat_index = load_index_from_github()
+    chat_index_source = "GitHub"
+if st.button("Gerade erzeugten lokalen Index verwenden"):
+    chat_index = load_local_index()
+    chat_index_source = "lokal"
 
 if chat_index:
     api_key = st.secrets["MISTRAL_API_KEY"]
