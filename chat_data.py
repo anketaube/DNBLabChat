@@ -9,10 +9,11 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import TextNode
 from llama_index.core.vector_stores import SimpleVectorStore
 from llama_index.core.indices.vector_store import VectorStoreIndex
-from llama_index.core.embeddings.utils import resolve_embed_model
 from llama_index.llms.mistralai import MistralAI
 from llama_index.query_engine import RetrieverQueryEngine
 from llama_index.readers.web import TrafilaturaWebReader
+from sentence_transformers import SentenceTransformer
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 # -------------------- Seiteneinstellungen und Zusammenfassung ---------------------
 st.set_page_config(
@@ -72,7 +73,8 @@ def load_index_from_github():
                 id_=entry.get("id", None)
             )
             nodes.append(node)
-        embed_model = resolve_embed_model("local:sentence-transformers/all-MiniLM-L6-v2")
+        # Embedding-Modell direkt erzeugen
+        embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
         index = VectorStoreIndex.from_documents(nodes, embed_model=embed_model)
         return index
     except Exception as e:
@@ -172,7 +174,7 @@ st.markdown("Erstelle aus den extrahierten Inhalten einen Vektorindex und lade i
 if st.session_state.generated_nodes:
     if st.button("Index erstellen"):
         with st.spinner("Index wird erstellt..."):
-            embed_model = resolve_embed_model("local:sentence-transformers/all-MiniLM-L6-v2")
+            embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
             index = VectorStoreIndex.from_documents(
                 st.session_state.generated_nodes,
                 embed_model=embed_model
