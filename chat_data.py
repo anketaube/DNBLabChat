@@ -1,169 +1,229 @@
 import streamlit as st
-import json
-import uuid
-import shutil
 import os
+import json
 import zipfile
-
+import requests
+from typing import List
 from llama_index.readers.web import TrafilaturaWebReader
-from llama_index.core.node_parser import SimpleNodeParser
-from llama_index.core.schema import TextNode
-from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.core.settings import Settings
+from llama_index.node_parser import SentenceSplitter
+from llama_index.schema import TextNode
+from llama_index.vector_stores import SimpleVectorStore
+from llama_index.indices.vector_store import VectorStoreIndex
+from llama_index.embeddings import resolve_embed_model
 from llama_index.llms.mistralai import MistralAI
+from llama_index.query_engine import RetrieverQueryEngine
 
-st.set_page_config(page_title="DNB Lab Index Generator", layout="wide")
-st.title("DNB Lab: JSON- und Vektorindex aus URLs erzeugen & Chat")
+# -------------------- Seiteneinstellungen und Zusammenfassung ---------------------
+st.set_page_config(
+    page_title="DNBLab Chat",
+    layout="wide"
+)
+st.title("DNBLab Chat")
+
+st.markdown("""
+**Mit DNBLab Chat kannst du Webseiten-Inhalte aus einer Liste von URLs extrahieren, in Text-Chunks aufteilen, als JSON exportieren, einen Vektorindex erzeugen und schließlich über einen Chat mit dem Index interagieren. Die Anwendung nutzt moderne LLM- und Embedding-Technologien, um Fragen zu den gesammelten Inhalten zu beantworten.**
+""")
+
+# -------------------- Datenschutzhinweis beim ersten Öffnen ----------------------
+if "datenschutz_akzeptiert" not in st.session_state:
+    st.session_state["datenschutz_akzeptiert"] = False
+
+if not st.session_state["datenschutz_akzeptiert"]:
+    with st.expander("Datenschutzhinweis", expanded=True):
+        st.markdown("""
+        **Wichtiger Hinweis zum Datenschutz:**  
+        Diese Anwendung verarbeitet die von dir eingegebenen URLs sowie die daraus extrahierten Inhalte ausschließlich zum Zweck der Indexierung und Beantwortung deiner Fragen.  
+        Es werden keine personenbezogenen Daten dauerhaft gespeichert oder an Dritte weitergegeben.  
+        Beispiel: Wenn du eine URL eingibst, wird deren Inhalt analysiert und in Text-Chunks zerlegt, jedoch nicht dauerhaft gespeichert.
+        """)
+        if st.button("Hinweis schließen"):
+            st.session_state["datenschutz_akzeptiert"] = True
+    st.stop()
+
+# -------------------- Auswahl: Eigenen Index bauen oder Direktstart ---------------
+st.header("Wie möchtest du starten?")
+st.markdown("""
+Du hast zwei Möglichkeiten:
+- **Schritt 1 & 2:** Eigene URLs eingeben, Inhalte extrahieren und einen neuen Index erstellen.
+- **Direkter Start:** Lade einen bestehenden IJSON- oder Vektorindex direkt aus GitHub und beginne sofort mit dem Chat.
+""")
+
+start_option = st.radio(
+    "Bitte wähle, wie du fortfahren möchtest:",
+    (
+        "Eigene URLs eingeben und Index erstellen (Schritte 1 & 2)",
+        "Direkt mit bestehendem Index aus GitHub starten (empfohlen für schnellen Einstieg)"
+    )
+)
+
+def load_index_from_github():
+    # URL zur Rohdatei (raw) auf GitHub
+    url = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.json"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        index_json = response.json()
+        # Aus JSON Nodes rekonstruieren
+        nodes = []
+        for entry in index_json:
+            node = TextNode(
+                text=entry["text"],
+                metadata=entry.get("metadata", {}),
+                id_=entry.get("id", None)
+            )
+            nodes.append(node)
+        embed_model = resolve_embed_model("local:sentence-transformers/all-MiniLM-L6-v2")
+        index = VectorStoreIndex.from_documents(nodes, embed_model=embed_model)
+        return index
+    except Exception as e:
+        st.error(f"Fehler beim Laden des Index von GitHub: {e}")
+        return None
+
+if start_option == "Direkt mit bestehendem Index aus GitHub starten (empfohlen für schnellen Einstieg)":
+    st.success("Der bestehende Index wird aus GitHub geladen. Du kannst sofort mit dem Chat beginnen.")
+    index = load_index_from_github()
+    if index is not None:
+        st.header("Schritt 3: Chat mit dem geladenen Index")
+        api_key = st.secrets.get("MISTRAL_API_KEY", None)
+        if not api_key:
+            st.error("Kein Mistral-API-Key gefunden. Bitte in den Streamlit-Secrets hinterlegen.")
+        else:
+            llm = MistralAI(api_key=api_key, model="mistral-medium")
+            query_engine = RetrieverQueryEngine.from_args(index.as_retriever(), llm=llm)
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
+            user_input = st.text_input("Deine Frage an den Index:")
+            if user_input:
+                with st.spinner("Antwort wird generiert..."):
+                    try:
+                        response = query_engine.query(user_input)
+                        st.session_state.chat_history.append(("Du", user_input))
+                        st.session_state.chat_history.append(("DNBLab Chat", str(response)))
+                    except Exception as e:
+                        st.error(f"Fehler bei der Anfrage: {e}")
+            for speaker, text in st.session_state.chat_history:
+                st.markdown(f"**{speaker}:** {text}")
+    else:
+        st.warning("Index konnte nicht geladen werden. Bitte überprüfe die GitHub-Integration.")
+    st.stop()
+
+# -------------------- Schritt 1: URLs eingeben und Inhalte extrahieren ------------
+st.header("Schritt 1: URLs eingeben und Inhalte extrahieren")
+st.markdown("Gib eine oder mehrere URLs ein (eine pro Zeile), deren Inhalte du analysieren möchtest.")
+
+urls_input = st.text_area("URLs (eine pro Zeile)")
 
 def is_valid_id(id_value):
-    return isinstance(id_value, str) and id_value.strip() != ""
+    return isinstance(id_value, str) and len(id_value) > 0
 
-def create_rich_nodes(urls):
-    documents = TrafilaturaWebReader().load_data(urls)
-    parser = SimpleNodeParser()
+def create_rich_nodes(urls: List[str]) -> List[TextNode]:
+    docs = TrafilaturaWebReader().load_data(urls)
+    parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
     nodes = []
-    for url, doc in zip(urls, documents):
-        doc.metadata["source"] = url
-        doc.metadata["title"] = doc.metadata.get("title", "")
-        for node in parser.get_nodes_from_documents([doc]):
-            node_id = node.node_id if is_valid_id(node.node_id) else str(uuid.uuid4())
-            if node.text and node.text.strip():
-                chunk_metadata = dict(node.metadata)
-                chunk_metadata["source"] = url
-                nodes.append(TextNode(
-                    text=node.text,
-                    metadata=chunk_metadata,
-                    id_=node_id
-                ))
+    for doc in docs:
+        chunks = parser.get_nodes_from_documents([doc])
+        for chunk in chunks:
+            chunk.metadata["source"] = doc.metadata.get("source", "")
+            chunk.metadata["title"] = doc.metadata.get("title", "")
+            if not is_valid_id(chunk.node_id):
+                chunk.node_id = f"{chunk.metadata['source']}_{len(nodes)}"
+            nodes.append(chunk)
     return nodes
 
-def index_to_rich_json(nodes):
-    export = []
-    for node in nodes:
-        if is_valid_id(node.node_id) and node.text and node.text.strip():
-            export.append({
-                "id": node.node_id,
-                "text": node.text,
-                "metadata": node.metadata,
-            })
-    return json.dumps(export, ensure_ascii=False, indent=2)
+def index_to_rich_json(nodes: List[TextNode]):
+    return [
+        {
+            "id": node.node_id,
+            "text": node.text,
+            "metadata": node.metadata,
+        }
+        for node in nodes
+    ]
 
 def zip_directory(folder_path, zip_path):
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(folder_path):
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(folder_path):
             for file in files:
-                abs_path = os.path.join(root, file)
-                rel_path = os.path.relpath(abs_path, folder_path)
-                zipf.write(abs_path, rel_path)
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, folder_path)
+                zipf.write(file_path, arcname)
 
-# Schritt 1: URLs eingeben und Index erzeugen
-st.header("Schritt 1: URLs eingeben und Index erzeugen")
-urls_input = st.text_area("Neue URLs (eine pro Zeile):")
-urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
+if "generated_nodes" not in st.session_state:
+    st.session_state.generated_nodes = []
 
-if urls and st.button("Index aus URLs erzeugen"):
-    with st.spinner("Indexiere URLs..."):
-        nodes = create_rich_nodes(urls)
-    if not nodes:
-        st.error("Keine gültigen Chunks aus den URLs extrahiert.")
-    else:
-        st.session_state.generated_nodes = nodes
-        st.success(f"{len(nodes)} Chunks erzeugt!")
-        # Download JSON
+if st.button("Inhalte extrahieren"):
+    urls = [url.strip() for url in urls_input.splitlines() if url.strip()]
+    if urls:
+        with st.spinner("Inhalte werden extrahiert..."):
+            nodes = create_rich_nodes(urls)
+            st.session_state.generated_nodes = nodes
+        st.success(f"{len(nodes)} Text-Chunks wurden extrahiert.")
         json_data = index_to_rich_json(nodes)
         st.download_button(
-            label="Index als JSON herunterladen (dnblab_index.json)",
-            data=json_data,
-            file_name="dnblab_index.json",
+            label="Extrahierte Chunks als JSON herunterladen",
+            data=json.dumps(json_data, ensure_ascii=False, indent=2),
+            file_name="dnblab_chunks.json",
             mime="application/json"
         )
+    else:
+        st.warning("Bitte gib mindestens eine gültige URL ein.")
 
-# Schritt 2: Vektorindex erzeugen und herunterladen
-if "generated_nodes" in st.session_state and st.session_state.generated_nodes:
-    st.header("Schritt 2: Vektorindex erzeugen und herunterladen")
-    if st.button("Vektorindex aus erzeugtem JSON bauen"):
-        with st.spinner("Erzeuge Vektorindex... (kann einige Minuten dauern)"):
-            # Embedding-Modell setzen
-            Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
-            index = VectorStoreIndex(st.session_state.generated_nodes)
-            persist_dir = "dnblab_index"
-            if os.path.exists(persist_dir):
-                shutil.rmtree(persist_dir)
-            index.storage_context.persist(persist_dir=persist_dir)
-            # Zippe das Verzeichnis für den Download
-            zip_path = "dnblab_index.zip"
-            zip_directory(persist_dir, zip_path)
-        with open(zip_path, "rb") as f:
+# -------------------- Schritt 2: Index erstellen und herunterladen ----------------
+st.header("Schritt 2: Index erstellen")
+st.markdown("Erstelle aus den extrahierten Inhalten einen Vektorindex und lade ihn als ZIP-Datei herunter.")
+
+if st.session_state.generated_nodes:
+    if st.button("Index erstellen"):
+        with st.spinner("Index wird erstellt..."):
+            embed_model = resolve_embed_model("local:sentence-transformers/all-MiniLM-L6-v2")
+            index = VectorStoreIndex.from_documents(
+                st.session_state.generated_nodes,
+                embed_model=embed_model
+            )
+            index.storage_context.persist(persist_dir="dnblab_index")
+            zip_directory("dnblab_index", "dnblab_index.zip")
+        st.success("Index wurde erstellt und steht zum Download bereit.")
+        with open("dnblab_index.zip", "rb") as f:
             st.download_button(
-                label="Vektorindex herunterladen (dnblab_index.zip)",
+                label="Index als ZIP herunterladen",
                 data=f,
                 file_name="dnblab_index.zip",
                 mime="application/zip"
             )
-        st.success("Vektorindex wurde erzeugt und steht zum Download bereit!")
-        # Optional: Aufräumen
-        # shutil.rmtree(persist_dir)
-        # os.remove(zip_path)
+else:
+    st.info("Bitte extrahiere zuerst Inhalte aus URLs in Schritt 1.")
 
-# Schritt 3: Chat mit lokalem Vektorindex und Mistral
-st.header("Schritt 3: Chat mit lokalem Vektorindex und Mistral")
+# -------------------- Schritt 3: Chat mit lokalem Index und Mistral --------------
+st.header("Schritt 3: Chat mit lokalem Index und Mistral")
 
 def load_index():
-    Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    persist_dir = "dnblab_index"
-    if not os.path.exists(persist_dir):
-        st.info("Bitte zuerst den Vektorindex erzeugen (oben)!")
-        return None
-    storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
-    return load_index_from_storage(storage_context)
+    if os.path.exists("dnblab_index"):
+        return VectorStoreIndex.load_from_disk("dnblab_index")
+    return None
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "chat_input" not in st.session_state:
-    st.session_state.chat_input = ""
-
-if st.button("Lokal erzeugten Index für Chat laden"):
-    with st.spinner("Lade lokalen Index..."):
-        st.session_state.index = load_index()
-        if st.session_state.index is not None:
-            st.success("Index geladen! Du kannst jetzt Fragen stellen.")
-
-if "index" in st.session_state and st.session_state.index:
-    mistral_api_key = st.secrets.get("MISTRAL_API_KEY", "")
-    if not mistral_api_key:
-        st.warning("Bitte MISTRAL_API_KEY in den Streamlit-Secrets hinterlegen.")
+if st.button("Lokal gespeicherten Index laden und Chat starten"):
+    index = load_index()
+    if index is None:
+        st.error("Kein lokaler Index gefunden. Bitte erstelle oder lade einen Index.")
     else:
-        llm = MistralAI(api_key=mistral_api_key)
-        query_engine = st.session_state.index.as_query_engine(llm=llm, similarity_top_k=3)
+        api_key = st.secrets.get("MISTRAL_API_KEY", None)
+        if not api_key:
+            st.error("Kein Mistral-API-Key gefunden. Bitte in den Streamlit-Secrets hinterlegen.")
+        else:
+            llm = MistralAI(api_key=api_key, model="mistral-medium")
+            query_engine = RetrieverQueryEngine.from_args(index.as_retriever(), llm=llm)
+            if "chat_history" not in st.session_state:
+                st.session_state.chat_history = []
+            user_input = st.text_input("Deine Frage an den Index:")
+            if user_input:
+                with st.spinner("Antwort wird generiert..."):
+                    try:
+                        response = query_engine.query(user_input)
+                        st.session_state.chat_history.append(("Du", user_input))
+                        st.session_state.chat_history.append(("DNBLab Chat", str(response)))
+                    except Exception as e:
+                        st.error(f"Fehler bei der Anfrage: {e}")
+            for speaker, text in st.session_state.chat_history:
+                st.markdown(f"**{speaker}:** {text}")
 
-        st.subheader("Chat mit dem Index")
-        # Verarbeitung vor dem Widget!
-        if st.session_state.chat_input:
-            user_input = st.session_state.chat_input
-            st.session_state.chat_history.append({"user": user_input, "bot": "..."})
-            with st.spinner("Antwort wird generiert..."):
-                try:
-                    response = query_engine.query(user_input)
-                    st.session_state.chat_history[-1]["bot"] = response.response
-                except Exception as e:
-                    if "429" in str(e) or "rate limit" in str(e).lower():
-                        st.session_state.chat_history[-1]["bot"] = (
-                            "Du hast das Anfragelimit der Mistral-API erreicht. "
-                            "Bitte warte einige Minuten und versuche es erneut."
-                        )
-                    else:
-                        st.session_state.chat_history[-1]["bot"] = f"Fehler bei der Anfrage: {e}"
-            st.session_state.chat_input = ""
-            st.rerun()
-
-        # Chatverlauf anzeigen
-        for entry in st.session_state.chat_history:
-            st.markdown(f"**Du:** {entry['user']}")
-            st.markdown(f"**Bot:** {entry['bot']}")
-
-        # Jetzt das Widget anzeigen
-        st.text_input("Deine Frage an den Index:", key="chat_input")
-else:
-    st.info("Lade den lokal erzeugten Index, um den Chat zu starten.")
-
+st.info("Du kannst nach Schritt 2 direkt mit dem Chat starten oder jederzeit einen bestehenden Index aus GitHub laden.")
