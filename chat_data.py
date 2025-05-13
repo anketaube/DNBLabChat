@@ -17,8 +17,11 @@ from llama_index.core.settings import Settings
 from llama_index.core import StorageContext, load_index_from_storage
 from sentence_transformers import SentenceTransformer
 
-# -------------------- Setze das Embedding-Modell global für LlamaIndex ------------
-Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# -------------------- Globale Konfiguration für Embedding-Modell ------------------
+EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+def set_global_embed_model():
+    Settings.embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL_NAME)
+set_global_embed_model()
 
 # -------------------- Seiteneinstellungen und Zusammenfassung ---------------------
 st.set_page_config(
@@ -64,6 +67,7 @@ start_option = st.radio(
 )
 
 def load_index_from_github():
+    set_global_embed_model()
     url = "https://github.com/anketaube/DNBLabChat/raw/main/dnblab_index.json"
     try:
         response = requests.get(url)
@@ -156,6 +160,7 @@ st.markdown("Erstelle aus den extrahierten Inhalten einen Vektorindex und lade i
 if st.session_state.generated_nodes:
     if st.button("Index erstellen"):
         with st.spinner("Index wird erstellt..."):
+            set_global_embed_model()
             index = VectorStoreIndex(
                 st.session_state.generated_nodes,
                 embed_model=Settings.embed_model
@@ -177,10 +182,10 @@ else:
 st.header("Schritt 3: Chat mit Index und Mistral")
 
 def load_local_index():
+    set_global_embed_model()
     persist_dir = "dnblab_index"
     if os.path.exists(persist_dir):
         storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
-        # Das globale Embedding-Modell ist bereits gesetzt!
         index = load_index_from_storage(storage_context)
         return index
     return None
@@ -188,7 +193,6 @@ def load_local_index():
 chat_index = None
 chat_index_source = None
 
-# Buttons untereinander platzieren
 if st.button("Index aus GitHub laden"):
     chat_index = load_index_from_github()
     chat_index_source = "GitHub"
@@ -198,8 +202,16 @@ if st.button("Gerade erzeugten lokalen Index verwenden"):
 
 if chat_index:
     api_key = st.secrets["MISTRAL_API_KEY"]
-    llm = MistralAI(api_key=api_key, model="mistral-medium")
-    query_engine = RetrieverQueryEngine.from_args(chat_index.as_retriever(), llm=llm)
+    try:
+        llm = MistralAI(api_key=api_key, model="mistral-medium")
+    except Exception as e:
+        st.error(f"Fehler beim Initialisieren des LLM: {e}")
+        st.stop()
+    try:
+        query_engine = RetrieverQueryEngine.from_args(chat_index.as_retriever(), llm=llm)
+    except Exception as e:
+        st.error(f"Fehler beim Initialisieren des Query Engines: {e}")
+        st.stop()
     if "chat_history" not in st.session_state or st.session_state.get("last_index_source") != chat_index_source:
         st.session_state.chat_history = []
         st.session_state["last_index_source"] = chat_index_source
