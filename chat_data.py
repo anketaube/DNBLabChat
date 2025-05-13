@@ -13,8 +13,12 @@ from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.llms.mistralai import MistralAI
 from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.core import StorageContext, load_index_from_storage, ServiceContext
+from llama_index.core.settings import Settings
+from llama_index.core import StorageContext, load_index_from_storage
 from sentence_transformers import SentenceTransformer
+
+# -------------------- Setze das Embedding-Modell global für LlamaIndex ------------
+Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # -------------------- Seiteneinstellungen und Zusammenfassung ---------------------
 st.set_page_config(
@@ -76,8 +80,7 @@ def load_index_from_github():
                 id_=entry.get("id", None)
             )
             nodes.append(node)
-        embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        index = VectorStoreIndex(nodes, embed_model=embed_model)
+        index = VectorStoreIndex(nodes, embed_model=Settings.embed_model)
         return index
     except Exception as e:
         st.error(f"Fehler beim Laden des Index von GitHub: {e}")
@@ -153,10 +156,9 @@ st.markdown("Erstelle aus den extrahierten Inhalten einen Vektorindex und lade i
 if st.session_state.generated_nodes:
     if st.button("Index erstellen"):
         with st.spinner("Index wird erstellt..."):
-            embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
             index = VectorStoreIndex(
                 st.session_state.generated_nodes,
-                embed_model=embed_model
+                embed_model=Settings.embed_model
             )
             index.storage_context.persist(persist_dir="dnblab_index")
             zip_directory("dnblab_index", "dnblab_index.zip")
@@ -178,9 +180,8 @@ def load_local_index():
     persist_dir = "dnblab_index"
     if os.path.exists(persist_dir):
         storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
-        embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        service_context = ServiceContext.from_defaults(embed_model=embed_model)
-        index = load_index_from_storage(storage_context, service_context=service_context)
+        # Das globale Embedding-Modell ist bereits gesetzt!
+        index = load_index_from_storage(storage_context)
         return index
     return None
 
