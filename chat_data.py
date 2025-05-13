@@ -64,12 +64,15 @@ def load_index_from_github():
         response = requests.get(url)
         response.raise_for_status()
         index_json = response.json()
-        # Aus JSON Nodes rekonstruieren
         nodes = []
         for entry in index_json:
+            # Sicherstellen, dass "source" vorhanden ist
+            metadata = entry.get("metadata", {})
+            if "source" not in metadata:
+                metadata["source"] = ""
             node = TextNode(
                 text=entry["text"],
-                metadata=entry.get("metadata", {}),
+                metadata=metadata,
                 id_=entry.get("id", None)
             )
             nodes.append(node)
@@ -79,43 +82,6 @@ def load_index_from_github():
     except Exception as e:
         st.error(f"Fehler beim Laden des Index von GitHub: {e}")
         return None
-
-if start_option == "Direkt mit bestehendem Index aus GitHub starten (empfohlen für schnellen Einstieg)":
-    st.success("Der bestehende Index wird aus GitHub geladen. Du kannst sofort mit dem Chat beginnen.")
-    index = load_index_from_github()
-    if index is not None:
-        st.header("Schritt 3: Chat mit dem geladenen Index")
-        api_key = st.secrets["MISTRAL_API_KEY"]
-        llm = MistralAI(api_key=api_key, model="mistral-medium")
-        query_engine = RetrieverQueryEngine.from_args(index.as_retriever(), llm=llm)
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
-        user_input = st.text_input("Deine Frage an den Index:")
-        if user_input:
-            with st.spinner("Antwort wird generiert..."):
-                try:
-                    response = query_engine.query(user_input)
-                    # Quellen extrahieren
-                    sources = set()
-                    if hasattr(response, "source_nodes") and response.source_nodes:
-                        for node in response.source_nodes:
-                            url = node.node.metadata.get("source")
-                            if url:
-                                sources.add(url)
-                    st.session_state.chat_history.append(("Du", user_input))
-                    if sources:
-                        st.session_state.chat_history.append(
-                            ("DNBLab Chat", f"{str(response)}\n\n**Quellen:**\n" + "\n".join(sources))
-                        )
-                    else:
-                        st.session_state.chat_history.append(("DNBLab Chat", str(response)))
-                except Exception as e:
-                    st.error(f"Fehler bei der Anfrage: {e}")
-        for speaker, text in st.session_state.chat_history:
-            st.markdown(f"**{speaker}:** {text}")
-    else:
-        st.warning("Index konnte nicht geladen werden. Bitte überprüfe die GitHub-Integration.")
-    st.stop()
 
 # -------------------- Schritt 1: URLs eingeben und Inhalte extrahieren ------------
 st.header("Schritt 1: URLs eingeben und Inhalte extrahieren")
@@ -127,20 +93,19 @@ def is_valid_id(id_value):
     return isinstance(id_value, str) and len(id_value) > 0
 
 def create_rich_nodes(urls: List[str]) -> List[TextNode]:
-    docs = TrafilaturaWebReader().load_data(urls)
-    parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
     nodes = []
-    for doc in docs:
-        doc_source = doc.metadata.get("source", "")
-        doc_title = doc.metadata.get("title", "")
-        chunks = parser.get_nodes_from_documents([doc])
-        for chunk in chunks:
-            # Setze die URL als Quelle
-            chunk.metadata["source"] = doc_source
-            chunk.metadata["title"] = doc_title
-            if not is_valid_id(chunk.node_id):
-                chunk.node_id = f"{doc_source}_{len(nodes)}"
-            nodes.append(chunk)
+    for url in urls:
+        docs = TrafilaturaWebReader().load_data([url])
+        parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
+        for doc in docs:
+            doc_title = doc.metadata.get("title", "")
+            chunks = parser.get_nodes_from_documents([doc])
+            for chunk in chunks:
+                chunk.metadata["source"] = url  # URL explizit setzen
+                chunk.metadata["title"] = doc_title
+                if not is_valid_id(chunk.node_id):
+                    chunk.node_id = f"{url}_{len(nodes)}"
+                nodes.append(chunk)
     return nodes
 
 def index_to_rich_json(nodes: List[TextNode]):
@@ -189,7 +154,6 @@ if st.session_state.generated_nodes:
     if st.button("Index erstellen"):
         with st.spinner("Index wird erstellt..."):
             embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
-            # KORRIGIERT: Direkt mit Nodes, nicht from_documents!
             index = VectorStoreIndex(
                 st.session_state.generated_nodes,
                 embed_model=embed_model
@@ -207,46 +171,55 @@ if st.session_state.generated_nodes:
 else:
     st.info("Bitte extrahiere zuerst Inhalte aus URLs in Schritt 1.")
 
-# -------------------- Schritt 3: Chat mit lokalem Index und Mistral --------------
-st.header("Schritt 3: Chat mit lokalem Index und Mistral")
+# -------------------- Schritt 3: Chat mit Index (GitHub oder lokal) --------------
+st.header("Schritt 3: Chat mit Index und Mistral")
 
 def load_index():
     if os.path.exists("dnblab_index"):
         return VectorStoreIndex.load_from_disk("dnblab_index")
     return None
 
-if st.button("Lokal gespeicherten Index laden und Chat starten"):
-    index = load_index()
-    if index is None:
-        st.error("Kein lokaler Index gefunden. Bitte erstelle oder lade einen Index.")
-    else:
-        api_key = st.secrets["MISTRAL_API_KEY"]
-        llm = MistralAI(api_key=api_key, model="mistral-medium")
-        query_engine = RetrieverQueryEngine.from_args(index.as_retriever(), llm=llm)
-        if "chat_history" not in st.session_state:
-            st.session_state.chat_history = []
-        user_input = st.text_input("Deine Frage an den Index:")
-        if user_input:
-            with st.spinner("Antwort wird generiert..."):
-                try:
-                    response = query_engine.query(user_input)
-                    # Quellen extrahieren
-                    sources = set()
-                    if hasattr(response, "source_nodes") and response.source_nodes:
-                        for node in response.source_nodes:
-                            url = node.node.metadata.get("source")
-                            if url:
-                                sources.add(url)
-                    st.session_state.chat_history.append(("Du", user_input))
-                    if sources:
-                        st.session_state.chat_history.append(
-                            ("DNBLab Chat", f"{str(response)}\n\n**Quellen:**\n" + "\n".join(sources))
-                        )
-                    else:
-                        st.session_state.chat_history.append(("DNBLab Chat", str(response)))
-                except Exception as e:
-                    st.error(f"Fehler bei der Anfrage: {e}")
-        for speaker, text in st.session_state.chat_history:
-            st.markdown(f"**{speaker}:** {text}")
+chat_index = None
+chat_index_source = None
+
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("Index aus GitHub laden"):
+        chat_index = load_index_from_github()
+        chat_index_source = "GitHub"
+with col2:
+    if st.button("Gerade erzeugten lokalen Index verwenden"):
+        chat_index = load_index()
+        chat_index_source = "lokal"
+
+if chat_index:
+    api_key = st.secrets["MISTRAL_API_KEY"]
+    llm = MistralAI(api_key=api_key, model="mistral-medium")
+    query_engine = RetrieverQueryEngine.from_args(chat_index.as_retriever(), llm=llm)
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    user_input = st.text_input("Deine Frage an den Index:")
+    if user_input:
+        with st.spinner("Antwort wird generiert..."):
+            try:
+                response = query_engine.query(user_input)
+                # Quellen extrahieren
+                sources = set()
+                if hasattr(response, "source_nodes") and response.source_nodes:
+                    for node in response.source_nodes:
+                        url = node.node.metadata.get("source")
+                        if url:
+                            sources.add(url)
+                st.session_state.chat_history.append(("Du", user_input))
+                if sources:
+                    st.session_state.chat_history.append(
+                        ("DNBLab Chat", f"{str(response)}\n\n**Quellen:**\n" + "\n".join(sources))
+                    )
+                else:
+                    st.session_state.chat_history.append(("DNBLab Chat", str(response)))
+            except Exception as e:
+                st.error(f"Fehler bei der Anfrage: {e}")
+    for speaker, text in st.session_state.chat_history:
+        st.markdown(f"**{speaker}:** {text}")
 
 st.info("Du kannst nach Schritt 2 direkt mit dem Chat starten oder jederzeit einen bestehenden Index aus GitHub laden.")
