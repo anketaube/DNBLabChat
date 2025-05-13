@@ -9,8 +9,8 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import TextNode
 from llama_index.core.vector_stores import SimpleVectorStore
 from llama_index.core.indices.vector_store import VectorStoreIndex
-from llama_index.llms.mistralai import MistralAI
 from llama_index.core.query_engine import RetrieverQueryEngine
+from llama_index.llms.mistralai import MistralAI
 from llama_index.readers.web import TrafilaturaWebReader
 from sentence_transformers import SentenceTransformer
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -73,9 +73,8 @@ def load_index_from_github():
                 id_=entry.get("id", None)
             )
             nodes.append(node)
-        # Embedding-Modell direkt erzeugen
         embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        index = VectorStoreIndex.from_documents(nodes, embed_model=embed_model)
+        index = VectorStoreIndex(nodes, embed_model=embed_model)
         return index
     except Exception as e:
         st.error(f"Fehler beim Laden des Index von GitHub: {e}")
@@ -96,8 +95,20 @@ if start_option == "Direkt mit bestehendem Index aus GitHub starten (empfohlen f
             with st.spinner("Antwort wird generiert..."):
                 try:
                     response = query_engine.query(user_input)
+                    # Quellen extrahieren
+                    sources = set()
+                    if hasattr(response, "source_nodes") and response.source_nodes:
+                        for node in response.source_nodes:
+                            url = node.node.metadata.get("source")
+                            if url:
+                                sources.add(url)
                     st.session_state.chat_history.append(("Du", user_input))
-                    st.session_state.chat_history.append(("DNBLab Chat", str(response)))
+                    if sources:
+                        st.session_state.chat_history.append(
+                            ("DNBLab Chat", f"{str(response)}\n\n**Quellen:**\n" + "\n".join(sources))
+                        )
+                    else:
+                        st.session_state.chat_history.append(("DNBLab Chat", str(response)))
                 except Exception as e:
                     st.error(f"Fehler bei der Anfrage: {e}")
         for speaker, text in st.session_state.chat_history:
@@ -120,12 +131,15 @@ def create_rich_nodes(urls: List[str]) -> List[TextNode]:
     parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
     nodes = []
     for doc in docs:
+        doc_source = doc.metadata.get("source", "")
+        doc_title = doc.metadata.get("title", "")
         chunks = parser.get_nodes_from_documents([doc])
         for chunk in chunks:
-            chunk.metadata["source"] = doc.metadata.get("source", "")
-            chunk.metadata["title"] = doc.metadata.get("title", "")
+            # Setze die URL als Quelle
+            chunk.metadata["source"] = doc_source
+            chunk.metadata["title"] = doc_title
             if not is_valid_id(chunk.node_id):
-                chunk.node_id = f"{chunk.metadata['source']}_{len(nodes)}"
+                chunk.node_id = f"{doc_source}_{len(nodes)}"
             nodes.append(chunk)
     return nodes
 
@@ -175,7 +189,8 @@ if st.session_state.generated_nodes:
     if st.button("Index erstellen"):
         with st.spinner("Index wird erstellt..."):
             embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
-            index = VectorStoreIndex.from_documents(
+            # KORRIGIERT: Direkt mit Nodes, nicht from_documents!
+            index = VectorStoreIndex(
                 st.session_state.generated_nodes,
                 embed_model=embed_model
             )
@@ -215,8 +230,20 @@ if st.button("Lokal gespeicherten Index laden und Chat starten"):
             with st.spinner("Antwort wird generiert..."):
                 try:
                     response = query_engine.query(user_input)
+                    # Quellen extrahieren
+                    sources = set()
+                    if hasattr(response, "source_nodes") and response.source_nodes:
+                        for node in response.source_nodes:
+                            url = node.node.metadata.get("source")
+                            if url:
+                                sources.add(url)
                     st.session_state.chat_history.append(("Du", user_input))
-                    st.session_state.chat_history.append(("DNBLab Chat", str(response)))
+                    if sources:
+                        st.session_state.chat_history.append(
+                            ("DNBLab Chat", f"{str(response)}\n\n**Quellen:**\n" + "\n".join(sources))
+                        )
+                    else:
+                        st.session_state.chat_history.append(("DNBLab Chat", str(response)))
                 except Exception as e:
                     st.error(f"Fehler bei der Anfrage: {e}")
         for speaker, text in st.session_state.chat_history:
