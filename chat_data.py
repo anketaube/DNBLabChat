@@ -12,8 +12,10 @@ from llama_index.core.indices.vector_store import VectorStoreIndex
 from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.llms.mistralai import MistralAI
 from llama_index.readers.web import TrafilaturaWebReader
-from sentence_transformers import SentenceTransformer
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core import StorageContext
+from llama_index.core import load_index_from_storage
+from sentence_transformers import SentenceTransformer
 
 # -------------------- Seiteneinstellungen und Zusammenfassung ---------------------
 st.set_page_config(
@@ -66,7 +68,6 @@ def load_index_from_github():
         index_json = response.json()
         nodes = []
         for entry in index_json:
-            # Sicherstellen, dass "source" vorhanden ist
             metadata = entry.get("metadata", {})
             if "source" not in metadata:
                 metadata["source"] = ""
@@ -101,7 +102,7 @@ def create_rich_nodes(urls: List[str]) -> List[TextNode]:
             doc_title = doc.metadata.get("title", "")
             chunks = parser.get_nodes_from_documents([doc])
             for chunk in chunks:
-                chunk.metadata["source"] = url  # URL explizit setzen
+                chunk.metadata["source"] = url
                 chunk.metadata["title"] = doc_title
                 if not is_valid_id(chunk.node_id):
                     chunk.node_id = f"{url}_{len(nodes)}"
@@ -174,9 +175,12 @@ else:
 # -------------------- Schritt 3: Chat mit Index (GitHub oder lokal) --------------
 st.header("Schritt 3: Chat mit Index und Mistral")
 
-def load_index():
-    if os.path.exists("dnblab_index"):
-        return VectorStoreIndex.load_from_disk("dnblab_index")
+def load_local_index():
+    persist_dir = "dnblab_index"
+    if os.path.exists(persist_dir):
+        storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
+        index = load_index_from_storage(storage_context)
+        return index
     return None
 
 chat_index = None
@@ -189,21 +193,21 @@ with col1:
         chat_index_source = "GitHub"
 with col2:
     if st.button("Gerade erzeugten lokalen Index verwenden"):
-        chat_index = load_index()
+        chat_index = load_local_index()
         chat_index_source = "lokal"
 
 if chat_index:
     api_key = st.secrets["MISTRAL_API_KEY"]
     llm = MistralAI(api_key=api_key, model="mistral-medium")
     query_engine = RetrieverQueryEngine.from_args(chat_index.as_retriever(), llm=llm)
-    if "chat_history" not in st.session_state:
+    if "chat_history" not in st.session_state or st.session_state.get("last_index_source") != chat_index_source:
         st.session_state.chat_history = []
+        st.session_state["last_index_source"] = chat_index_source
     user_input = st.text_input("Deine Frage an den Index:")
     if user_input:
         with st.spinner("Antwort wird generiert..."):
             try:
                 response = query_engine.query(user_input)
-                # Quellen extrahieren
                 sources = set()
                 if hasattr(response, "source_nodes") and response.source_nodes:
                     for node in response.source_nodes:
