@@ -19,6 +19,7 @@ from sentence_transformers import SentenceTransformer
 
 # -------------------- Globale Konfiguration für Embedding-Modell ------------------
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+
 def set_global_embed_model():
     Settings.embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL_NAME)
 set_global_embed_model()
@@ -28,8 +29,8 @@ st.set_page_config(
     page_title="DNBLab Chat",
     layout="wide"
 )
-st.title("DNBLab Chat")
 
+st.title("DNBLab Chat")
 st.markdown("""
 **Mit DNBLab Chat kannst du Webseiten-Inhalte aus einer Liste von URLs extrahieren, in Text-Chunks aufteilen, als JSON exportieren, einen Vektorindex erzeugen und schließlich über einen Chat mit dem Index interagieren. Die Anwendung nutzt moderne LLM- und Embedding-Technologien, um Fragen zu den gesammelten Inhalten zu beantworten.**
 """)
@@ -37,18 +38,21 @@ st.markdown("""
 # -------------------- Datenschutzhinweis beim ersten Öffnen ----------------------
 if "datenschutz_akzeptiert" not in st.session_state:
     st.session_state["datenschutz_akzeptiert"] = False
+if "datenschutz_expanded" not in st.session_state:
+    st.session_state["datenschutz_expanded"] = True
 
 if not st.session_state["datenschutz_akzeptiert"]:
-    with st.expander("Datenschutzhinweis", expanded=True):
+    with st.expander("Datenschutzhinweis", expanded=st.session_state["datenschutz_expanded"]):
         st.markdown("""
-        **Wichtiger Hinweis zum Datenschutz:**  
-        Diese Anwendung verarbeitet die von dir eingegebenen URLs sowie die daraus extrahierten Inhalte ausschließlich zum Zweck der Indexierung und Beantwortung deiner Fragen.  
-        Es werden keine personenbezogenen Daten dauerhaft gespeichert oder an Dritte weitergegeben.  
+        **Wichtiger Hinweis zum Datenschutz:**
+        ... Diese Anwendung verarbeitet die von dir eingegebenen URLs sowie die daraus extrahierten Inhalte ausschließlich zum Zweck der Indexierung und Beantwortung deiner Fragen.
+        Es werden keine personenbezogenen Daten dauerhaft gespeichert oder an Dritte weitergegeben.
         Beispiel: Wenn du eine URL eingibst, wird deren Inhalt analysiert und in Text-Chunks zerlegt, jedoch nicht dauerhaft gespeichert.
         """)
         if st.button("Hinweis schließen"):
             st.session_state["datenschutz_akzeptiert"] = True
-    st.stop()
+            st.session_state["datenschutz_expanded"] = False
+            st.experimental_rerun()
 
 # -------------------- Auswahl: Eigenen Index bauen oder Direktstart ---------------
 st.header("Wie möchtest du starten?")
@@ -60,10 +64,10 @@ Du hast zwei Möglichkeiten:
 
 start_option = st.radio(
     "Bitte wähle, wie du fortfahren möchtest:",
-    (
+    [
         "Eigene URLs eingeben und Index erstellen (Schritte 1 & 2)",
         "Direkt mit bestehendem Index aus GitHub starten (empfohlen für schnellen Einstieg)"
-    )
+    ]
 )
 
 def load_index_from_github():
@@ -196,6 +200,7 @@ chat_index_source = None
 if st.button("Index aus GitHub laden"):
     chat_index = load_index_from_github()
     chat_index_source = "GitHub"
+
 if st.button("Gerade erzeugten lokalen Index verwenden"):
     chat_index = load_local_index()
     chat_index_source = "lokal"
