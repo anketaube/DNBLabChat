@@ -26,19 +26,20 @@ st.set_page_config(
 if "datenschutz_akzeptiert" not in st.session_state:
     st.session_state["datenschutz_akzeptiert"] = False
 
-if not st.session_state["datenschutz_akzeptiert"]:
+def datenschutz_dialog():
     with st.expander("Datenschutzhinweis", expanded=True):
         st.markdown("""
         **Wichtiger Hinweis zum Datenschutz:**
         Diese Anwendung verarbeitet die von dir eingegebenen URLs sowie die daraus extrahierten Inhalte ausschließlich zum Zweck der Indexierung und Beantwortung deiner Fragen.
-
         Es werden keine personenbezogenen Daten dauerhaft gespeichert oder an Dritte weitergegeben.
-
         Beispiel: Wenn du eine URL eingibst, wird deren Inhalt analysiert und in Text-Chunks zerlegt, jedoch nicht dauerhaft gespeichert.
         """)
-        if st.button("Hinweis schließen"):
+        if st.button("Verstanden"):
             st.session_state["datenschutz_akzeptiert"] = True
             st.experimental_rerun()
+
+if not st.session_state["datenschutz_akzeptiert"]:
+    datenschutz_dialog()
     st.stop()
 
 # -------------------- Globale Konfiguration für Embedding-Modell ------------------
@@ -56,7 +57,6 @@ st.markdown("""
 st.header("Wie möchtest du starten?")
 st.markdown("""
 Du hast zwei Möglichkeiten:
-
 - **Schritt 1 & 2:** Eigene URLs eingeben, Inhalte extrahieren und einen neuen Index erstellen.
 - **Direkter Start:** Lade einen bestehenden JSON- oder Vektorindex direkt aus GitHub und beginne sofort mit dem Chat.
 """)
@@ -93,92 +93,92 @@ def load_index_from_github():
         return None
 
 # -------------------- Schritt 1: URLs eingeben und Inhalte extrahieren ------------
-if start_option.startswith("Eigene URLs"):
-    st.header("Schritt 1: URLs eingeben und Inhalte extrahieren")
-    st.markdown("Gib eine oder mehrere URLs ein (eine pro Zeile), deren Inhalte du analysieren möchtest.")
-    urls_input = st.text_area("URLs (eine pro Zeile)")
+st.header("Schritt 1: URLs eingeben und Inhalte extrahieren")
+st.markdown("Gib eine oder mehrere URLs ein (eine pro Zeile), deren Inhalte du analysieren möchtest.")
 
-    def is_valid_id(id_value):
-        return isinstance(id_value, str) and len(id_value) > 0
+urls_input = st.text_area("URLs (eine pro Zeile)")
 
-    def create_rich_nodes(urls: List[str]) -> List[TextNode]:
-        nodes = []
-        for url in urls:
-            docs = TrafilaturaWebReader().load_data([url])
-            parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
-            for doc in docs:
-                doc_title = doc.metadata.get("title", "")
-                chunks = parser.get_nodes_from_documents([doc])
-                for chunk in chunks:
-                    chunk.metadata["source"] = url
-                    chunk.metadata["title"] = doc_title
-                    if not is_valid_id(chunk.node_id):
-                        chunk.node_id = f"{url}_{len(nodes)}"
-                    nodes.append(chunk)
-        return nodes
+def is_valid_id(id_value):
+    return isinstance(id_value, str) and len(id_value) > 0
 
-    def index_to_rich_json(nodes: List[TextNode]):
-        return [
-            {
-                "id": node.node_id,
-                "text": node.text,
-                "metadata": node.metadata,
-            }
-            for node in nodes
-        ]
+def create_rich_nodes(urls: List[str]) -> List[TextNode]:
+    nodes = []
+    for url in urls:
+        docs = TrafilaturaWebReader().load_data([url])
+        parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
+        for doc in docs:
+            doc_title = doc.metadata.get("title", "")
+            chunks = parser.get_nodes_from_documents([doc])
+            for chunk in chunks:
+                chunk.metadata["source"] = url
+                chunk.metadata["title"] = doc_title
+                if not is_valid_id(chunk.node_id):
+                    chunk.node_id = f"{url}_{len(nodes)}"
+                nodes.append(chunk)
+    return nodes
 
-    def zip_directory(folder_path, zip_path):
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for root, _, files in os.walk(folder_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, folder_path)
-                    zipf.write(file_path, arcname)
+def index_to_rich_json(nodes: List[TextNode]):
+    return [
+        {
+            "id": node.node_id,
+            "text": node.text,
+            "metadata": node.metadata,
+        }
+        for node in nodes
+    ]
 
-    if "generated_nodes" not in st.session_state:
-        st.session_state.generated_nodes = []
+def zip_directory(folder_path, zip_path):
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, folder_path)
+                zipf.write(file_path, arcname)
 
-    if st.button("Inhalte extrahieren"):
-        urls = [url.strip() for url in urls_input.splitlines() if url.strip()]
-        if urls:
-            with st.spinner("Inhalte werden extrahiert..."):
-                nodes = create_rich_nodes(urls)
-                st.session_state.generated_nodes = nodes
-                st.success(f"{len(nodes)} Text-Chunks wurden extrahiert.")
-                json_data = index_to_rich_json(nodes)
-                st.download_button(
-                    label="Extrahierte Chunks als JSON herunterladen",
-                    data=json.dumps(json_data, ensure_ascii=False, indent=2),
-                    file_name="dnblab_chunks.json",
-                    mime="application/json"
-                )
-        else:
-            st.warning("Bitte gib mindestens eine gültige URL ein.")
+if "generated_nodes" not in st.session_state:
+    st.session_state.generated_nodes = []
 
-    # -------------------- Schritt 2: Index erstellen und herunterladen ----------------
-    st.header("Schritt 2: Index erstellen")
-    st.markdown("Erstelle aus den extrahierten Inhalten einen Vektorindex und lade ihn als ZIP-Datei herunter.")
-
-    if st.session_state.generated_nodes:
-        if st.button("Index erstellen"):
-            with st.spinner("Index wird erstellt..."):
-                set_global_embed_model()
-                index = VectorStoreIndex(
-                    st.session_state.generated_nodes,
-                    embed_model=Settings.embed_model
-                )
-                index.storage_context.persist(persist_dir="dnblab_index")
-                zip_directory("dnblab_index", "dnblab_index.zip")
-                st.success("Index wurde erstellt und steht zum Download bereit.")
-                with open("dnblab_index.zip", "rb") as f:
-                    st.download_button(
-                        label="Index als ZIP herunterladen",
-                        data=f,
-                        file_name="dnblab_index.zip",
-                        mime="application/zip"
-                    )
+if st.button("Inhalte extrahieren"):
+    urls = [url.strip() for url in urls_input.splitlines() if url.strip()]
+    if urls:
+        with st.spinner("Inhalte werden extrahiert..."):
+            nodes = create_rich_nodes(urls)
+            st.session_state.generated_nodes = nodes
+            st.success(f"{len(nodes)} Text-Chunks wurden extrahiert.")
+            json_data = index_to_rich_json(nodes)
+            st.download_button(
+                label="Extrahierte Chunks als JSON herunterladen",
+                data=json.dumps(json_data, ensure_ascii=False, indent=2),
+                file_name="dnblab_chunks.json",
+                mime="application/json"
+            )
     else:
-        st.info("Bitte extrahiere zuerst Inhalte aus URLs in Schritt 1.")
+        st.warning("Bitte gib mindestens eine gültige URL ein.")
+
+# -------------------- Schritt 2: Index erstellen und herunterladen ----------------
+st.header("Schritt 2: Index erstellen")
+st.markdown("Erstelle aus den extrahierten Inhalten einen Vektorindex und lade ihn als ZIP-Datei herunter.")
+
+if st.session_state.generated_nodes:
+    if st.button("Index erstellen"):
+        with st.spinner("Index wird erstellt..."):
+            set_global_embed_model()
+            index = VectorStoreIndex(
+                st.session_state.generated_nodes,
+                embed_model=Settings.embed_model
+            )
+            index.storage_context.persist(persist_dir="dnblab_index")
+            zip_directory("dnblab_index", "dnblab_index.zip")
+            st.success("Index wurde erstellt und steht zum Download bereit.")
+            with open("dnblab_index.zip", "rb") as f:
+                st.download_button(
+                    label="Index als ZIP herunterladen",
+                    data=f,
+                    file_name="dnblab_index.zip",
+                    mime="application/zip"
+                )
+else:
+    st.info("Bitte extrahiere zuerst Inhalte aus URLs in Schritt 1.")
 
 # -------------------- Schritt 3: Chat mit Index (GitHub oder lokal) --------------
 st.header("Schritt 3: Chat mit Index und Mistral")
@@ -206,11 +206,7 @@ with col2:
         chat_index_source = "lokal"
 
 if chat_index:
-    # API-Key muss in .streamlit/secrets.toml stehen: MISTRAL_API_KEY = "..."
-    api_key = st.secrets.get("MISTRAL_API_KEY", None)
-    if not api_key:
-        st.error("MISTRAL_API_KEY fehlt in den Streamlit-Secrets!")
-        st.stop()
+    api_key = st.secrets["MISTRAL_API_KEY"]
     try:
         llm = MistralAI(api_key=api_key, model="mistral-medium")
     except Exception as e:
@@ -221,11 +217,9 @@ if chat_index:
     except Exception as e:
         st.error(f"Fehler beim Initialisieren des Query Engines: {e}")
         st.stop()
-
     if "chat_history" not in st.session_state or st.session_state.get("last_index_source") != chat_index_source:
         st.session_state.chat_history = []
         st.session_state["last_index_source"] = chat_index_source
-
     user_input = st.text_input("Deine Frage an den Index:")
     if user_input:
         with st.spinner("Antwort wird generiert..."):
@@ -246,8 +240,7 @@ if chat_index:
                     st.session_state.chat_history.append(("DNBLab Chat", str(response)))
             except Exception as e:
                 st.error(f"Fehler bei der Anfrage: {e}")
-
     for speaker, text in st.session_state.chat_history:
         st.markdown(f"**{speaker}:** {text}")
-
-st.info("Du kannst nach Schritt 2 direkt mit dem Chat starten oder jederzeit einen bestehenden Index aus GitHub laden.")
+else:
+    st.info("Du kannst nach Schritt 2 direkt mit dem Chat starten oder jederzeit einen bestehenden Index aus GitHub laden.")
