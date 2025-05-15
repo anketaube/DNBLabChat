@@ -3,7 +3,7 @@ llama-index
 llama-index-readers-web
 llama-index-llms-mistralai
 llama-index-embeddings-huggingface
-sentence-transformers
+sentence-transformers>=2.7.0
 requests
 openpyxl
 trafilatura
