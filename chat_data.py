@@ -15,7 +15,6 @@ from llama_index.readers.web import TrafilaturaWebReader
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.core.settings import Settings
 from llama_index.core import StorageContext, load_index_from_storage
-from sentence_transformers import SentenceTransformer
 
 # -------------------- Globale Konfiguration für Embedding-Modell ------------------
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
@@ -24,22 +23,11 @@ def set_global_embed_model():
     Settings.embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL_NAME)
 set_global_embed_model()
 
-# -------------------- Seiteneinstellungen und Zusammenfassung ---------------------
-st.set_page_config(
-    page_title="DNBLab Chat",
-    layout="wide"
-)
-
-st.title("DNBLab Chat")
-st.markdown("""
-**Mit DNBLab Chat kannst du Webseiten-Inhalte aus einer Liste von URLs extrahieren, in Text-Chunks aufteilen, als JSON exportieren, einen Vektorindex erzeugen und schließlich über einen Chat mit dem Index interagieren. Die Anwendung nutzt moderne LLM- und Embedding-Technologien, um Fragen zu den gesammelten Inhalten zu beantworten.**
-""")
-
 # -------------------- Datenschutzhinweis als Overlay/Modal -----------------------
 if "datenschutz_akzeptiert" not in st.session_state:
     st.session_state["datenschutz_akzeptiert"] = False
 
-@st.experimental_dialog("Datenschutzhinweis")
+@st.dialog("Datenschutzhinweis")
 def datenschutz_dialog():
     st.markdown("""
     **Wichtiger Hinweis zum Datenschutz:**
@@ -53,6 +41,17 @@ def datenschutz_dialog():
 
 if not st.session_state["datenschutz_akzeptiert"]:
     datenschutz_dialog()
+
+# -------------------- Seiteneinstellungen und Zusammenfassung ---------------------
+st.set_page_config(
+    page_title="DNBLab Chat",
+    layout="wide"
+)
+
+st.title("DNBLab Chat")
+st.markdown("""
+**Mit DNBLab Chat kannst du Webseiten-Inhalte aus einer Liste von URLs extrahieren, in Text-Chunks aufteilen, als JSON exportieren, einen Vektorindex erzeugen und schließlich über einen Chat mit dem Index interagieren. Die Anwendung nutzt moderne LLM- und Embedding-Technologien, um Fragen zu den gesammelten Inhalten zu beantworten.**
+""")
 
 # -------------------- Auswahl: Eigenen Index bauen oder Direktstart ---------------
 st.header("Wie möchtest du starten?")
