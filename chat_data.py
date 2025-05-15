@@ -35,24 +35,24 @@ st.markdown("""
 **Mit DNBLab Chat kannst du Webseiten-Inhalte aus einer Liste von URLs extrahieren, in Text-Chunks aufteilen, als JSON exportieren, einen Vektorindex erzeugen und schließlich über einen Chat mit dem Index interagieren. Die Anwendung nutzt moderne LLM- und Embedding-Technologien, um Fragen zu den gesammelten Inhalten zu beantworten.**
 """)
 
-# -------------------- Datenschutzhinweis beim ersten Öffnen ----------------------
+# -------------------- Datenschutzhinweis als Overlay/Modal -----------------------
 if "datenschutz_akzeptiert" not in st.session_state:
     st.session_state["datenschutz_akzeptiert"] = False
-if "datenschutz_expanded" not in st.session_state:
-    st.session_state["datenschutz_expanded"] = True
+
+@st.experimental_dialog("Datenschutzhinweis")
+def datenschutz_dialog():
+    st.markdown("""
+    **Wichtiger Hinweis zum Datenschutz:**
+    Diese Anwendung verarbeitet die von dir eingegebenen URLs sowie die daraus extrahierten Inhalte ausschließlich zum Zweck der Indexierung und Beantwortung deiner Fragen.
+    Es werden keine personenbezogenen Daten dauerhaft gespeichert oder an Dritte weitergegeben.
+    Beispiel: Wenn du eine URL eingibst, wird deren Inhalt analysiert und in Text-Chunks zerlegt, jedoch nicht dauerhaft gespeichert.
+    """)
+    if st.button("Verstanden"):
+        st.session_state["datenschutz_akzeptiert"] = True
+        st.rerun()
 
 if not st.session_state["datenschutz_akzeptiert"]:
-    with st.expander("Datenschutzhinweis", expanded=st.session_state["datenschutz_expanded"]):
-        st.markdown("""
-        **Wichtiger Hinweis zum Datenschutz:**
-        ... Diese Anwendung verarbeitet die von dir eingegebenen URLs sowie die daraus extrahierten Inhalte ausschließlich zum Zweck der Indexierung und Beantwortung deiner Fragen.
-        Es werden keine personenbezogenen Daten dauerhaft gespeichert oder an Dritte weitergegeben.
-        Beispiel: Wenn du eine URL eingibst, wird deren Inhalt analysiert und in Text-Chunks zerlegt, jedoch nicht dauerhaft gespeichert.
-        """)
-        if st.button("Hinweis schließen"):
-            st.session_state["datenschutz_akzeptiert"] = True
-            st.session_state["datenschutz_expanded"] = False
-            st.experimental_rerun()
+    datenschutz_dialog()
 
 # -------------------- Auswahl: Eigenen Index bauen oder Direktstart ---------------
 st.header("Wie möchtest du starten?")
