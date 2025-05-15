@@ -113,3 +113,43 @@ def create_rich_nodes(urls: List[str]) -> List[TextNode]:
             doc_title = doc.metadata.get("title", "")
             chunks = parser.get_nodes_from_documents([doc])
             for chunk in chunks:
+                chunk.metadata["source"] = url
+                chunk.metadata["title"] = doc_title
+                if not is_valid_id(chunk.node_id):
+                    chunk.node_id = f"{url}_{len(nodes)}"
+                nodes.append(chunk)
+    return nodes
+
+def index_to_rich_json(nodes: List[TextNode]):
+    return [
+        {
+            "id": node.node_id,
+            "text": node.text,
+            "metadata": node.metadata,
+        }
+        for node in nodes
+    ]
+
+def zip_directory(folder_path, zip_path):
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, folder_path)
+                zipf.write(file_path, arcname)
+
+if "generated_nodes" not in st.session_state:
+    st.session_state.generated_nodes = []
+
+if st.button("Inhalte extrahieren"):
+    urls = [url.strip() for url in urls_input.splitlines() if url.strip()]
+    if urls:
+        with st.spinner("Inhalte werden extrahiert..."):
+            nodes = create_rich_nodes(urls)
+            st.session_state.generated_nodes = nodes
+        st.success(f"{len(nodes)} Text-Chunks wurden extrahiert.")
+        json_data = index_to_rich_json(nodes)
+        st.download_button(
+            label="Extrahierte Chunks als JSON herunterladen",
+            data=json.dumps(json_data
+            data=json.dumps(json_data
